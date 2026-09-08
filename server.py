@@ -26,7 +26,7 @@ def remove_client(client_socket):
         pass
 
     
-def broadcast(data):
+def broadcast(source, data):
     
     with clients_lock:
         current_clients = clients[:]
@@ -34,7 +34,8 @@ def broadcast(data):
     # Since, network I/0 can be slow, better to do outside the lock.
     for client in current_clients:
         try:
-            client.sendall(data) 
+            if client != source:
+                client.sendall(data) 
         except OSError:
             remove_client(client)
 
@@ -54,7 +55,7 @@ def handle_client(client_socket, address):
             message = data.decode()
 
             print(f"{address}: {message}")
-            broadcast(data) # We can also send the data.
+            broadcast(client_socket, data) # We can also send the data.
     except OSError:
         pass
     finally:
