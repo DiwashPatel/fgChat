@@ -11,32 +11,55 @@ clients = []
 clients_lock = threading.Lock()
 
 # Also, we can't change the list during iteration, so removing the client in case of exception is also chaning the list. so better to list all dead sockets and then later remove.
-def broadcast(message):
-    dead_clients = []
-    with clients_lock:
-        for client in clients[:]:
-            try:
-                client.sendall(message.encode()) # since, message was decoded (it became from bytes to str). So again making it bytes.
-            except Exception:
-                dead_clients.append(client)
+def remove_client(client_socket):
 
-        for dead_client in dead_clients:
-            clients.remove(dead_client) # No problem, since client sockets are always unique.
+    #Remove from our client list
+    with clients_lock:
+        # Check if client. inside the lock. not outside the lock, otherwise other may have changed, and .remove can cause error.
+        if client_socket in clients:
+            clients.remove(client_socket) # No problem, since client sockets are always unique.
+    #Close the socket.
+    try:
+        client_socket.close()
+        print(f"Client {client_socket} closed")
+    except OSError:
+        pass
+
+    
+def broadcast(data):
+    
+    with clients_lock:
+        current_clients = clients[:]
+
+    # Since, network I/0 can be slow, better to do outside the lock.
+    for client in current_clients:
+        try:
+            client.sendall(data) 
+        except OSError:
+            remove_client(client)
+
 
 def handle_client(client_socket, address):
 
     print(f"{address} connected")
 
-    while True:
-        data = client_socket.recv(1024) # Not: server.recv()
+    try:
+        while True:
+            data = client_socket.recv(1024) # Not: server.recv()
 
-        if not data:
-            break
+            if not data:
+                # Normal TCP disconnect. gets a b'' empty stuff.
+                break
 
-        message = data.decode()
+            message = data.decode()
 
-        print(f"{address}: {message}")
-        broadcast(message) # We can also send the data.
+            print(f"{address}: {message}")
+            broadcast(data) # We can also send the data.
+    except OSError:
+        pass
+    finally:
+        remove_client(client_socket)
+        
 
     client_socket.close()
 
@@ -53,7 +76,8 @@ try:
     while True:
         client_socket, address = server.accept()
 
-        clients.append(client_socket)
+        with clients_lock:
+            clients.append(client_socket)
 
         thread = threading.Thread(
             target=handle_client,
