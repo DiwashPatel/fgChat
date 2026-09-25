@@ -1,3 +1,4 @@
+import getpass
 import socket
 import threading
 
@@ -5,51 +6,44 @@ HOST = "127.0.0.1"
 PORT = 5000
 
 
-def receive_messages(client):
-    """Continuously receive broadcasts from the server."""
-    while True:
-        try:
-            data = client.recv(4096)
-
-            # recv() returning b"" means the server closed the connection
-            if not data:
-                print("\nServer disconnected.")
-                break
-
-            print(f"\n{data.decode(errors='replace')}")
-            print("> ", end="", flush=True)
-
-        except (ConnectionResetError, OSError):
-            break
+def receive_messages(stream):
+    for line in stream:
+        print(f"\n{line.rstrip()}\n> ", end="", flush=True)
+    print("\nServer disconnected.")
 
 
 def main():
-    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    action = input("Register a new account or log in? [register/login]: ").strip().lower()
+    if action not in ("register", "login"):
+        print("Choose register or login.")
+        return
+    username = input("Username (3-24 letters, numbers, underscores): ").strip()
+    password = getpass.getpass("Password (10-128 characters): ")
 
+    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         client.connect((HOST, PORT))
-        print(f"Connected to {HOST}:{PORT}")
+        stream = client.makefile("r", encoding="utf-8", errors="replace")
+        print(stream.readline().rstrip())
+        client.sendall(f"{action.upper()} {username} {password}\n".encode("utf-8"))
+        result = stream.readline().rstrip()
+        print(result)
+        if not result.startswith("AUTH_OK "):
+            return
 
-        # Separate thread constantly waits for broadcasts
-        receiver_thread = threading.Thread(
-            target=receive_messages,
-            args=(client,),
-            daemon=True
-        )
-        receiver_thread.start()
-
-        # Main thread handles keyboard input
+        threading.Thread(target=receive_messages, args=(stream,), daemon=True).start()
         while True:
             message = input("> ")
-
             if message.lower() in ("quit", "exit"):
                 break
-
-            client.sendall((message + "\n").encode())
-
+            if "\n" not in message and len(message.encode("utf-8")) <= 4096:
+                client.sendall((message + "\n").encode("utf-8"))
+            else:
+                print("Messages must fit on one line and be at most 4096 bytes.")
     except ConnectionRefusedError:
         print(f"Could not connect to {HOST}:{PORT}")
-
+    except OSError as error:
+        print(f"Connection error: {error}")
     finally:
         client.close()
 
