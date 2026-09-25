@@ -27,7 +27,7 @@ class FrameType(IntEnum):
     PONG = 0x03
     CLOSE = 0x04
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class FrameHeader:
     version: int
     frame_type: FrameType
@@ -35,7 +35,7 @@ class FrameHeader:
     payload_length: int
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class Frame:
     frame_header: FrameHeader
     payload: bytes
@@ -135,7 +135,7 @@ def receive_frame(sock) -> Frame:
 
     payload = recv_exact(sock, header.payload_length)
 
-    return Frame(header=header, payload=payload)
+    return Frame(frame_header=header, payload=payload)
 
 
 def send_frame(
