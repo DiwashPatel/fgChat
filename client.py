@@ -13,12 +13,14 @@ def receive_messages(stream):
 
 
 def main():
-    action = input("Register a new account or log in? [register/login]: ").strip().lower()
-    if action not in ("register", "login"):
-        print("Choose register or login.")
+    command = input("Enter REGISTER or LOGIN, optionally followed by your username: ").strip()
+    parts = command.split(maxsplit=2)
+    action = parts[0].lower() if parts else ""
+    if action not in ("register", "login") or len(parts) > 3:
+        print("Use REGISTER [username] or LOGIN [username].")
         return
-    username = input("Username (3-24 letters, numbers, underscores): ").strip()
-    password = getpass.getpass("Password (10-128 characters): ")
+    username = parts[1] if len(parts) >= 2 else input("Username (3-24 letters, numbers, underscores): ").strip()
+    password = parts[2] if len(parts) == 3 else getpass.getpass("Password (10-128 characters): ")
 
     client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
