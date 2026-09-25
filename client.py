@@ -1,6 +1,8 @@
 import socket
 import threading
 
+from protocol import FrameType, receive_frame, send_frame
+
 HOST = "127.0.0.1"
 PORT = 5000
 
@@ -9,17 +11,16 @@ def receive_messages(client):
     """Continuously receive broadcasts from the server."""
     while True:
         try:
-            data = client.recv(4096)
+            frame = receive_frame(client)
 
-            # recv() returning b"" means the server closed the connection
-            if not data:
+            if frame.frame_header.frame_type == FrameType.DATA:
+                print(f"\n{frame.payload.decode(errors='replace')}")
+            elif frame.frame_header.frame_type == FrameType.CLOSE:
                 print("\nServer disconnected.")
                 break
-
-            print(f"\n{data.decode(errors='replace')}")
             print("> ", end="", flush=True)
 
-        except (ConnectionResetError, OSError):
+        except (ConnectionError, OSError):
             break
 
 
@@ -45,7 +46,7 @@ def main():
             if message.lower() in ("quit", "exit"):
                 break
 
-            client.sendall((message + "\n").encode())
+            send_frame(client, FrameType.DATA, (message + "\n").encode())
 
     except ConnectionRefusedError:
         print(f"Could not connect to {HOST}:{PORT}")

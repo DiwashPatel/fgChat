@@ -2,6 +2,8 @@ import socket
 import os
 import threading
 
+from protocol import FrameType, ProtocolError, receive_frame, send_frame
+
 HOST = "127.0.0.1"
 PORT = 5000
 
@@ -35,7 +37,7 @@ def broadcast(source, data):
     for client in current_clients:
         try:
             if client != source:
-                client.sendall(data) 
+                send_frame(client, FrameType.DATA, data)
         except OSError:
             remove_client(client)
 
@@ -46,17 +48,17 @@ def handle_client(client_socket, address):
 
     try:
         while True:
-            data = client_socket.recv(1024) # Not: server.recv()
+            frame = receive_frame(client_socket)
 
-            if not data:
-                # Normal TCP disconnect. gets a b'' empty stuff.
-                break
+            if frame.frame_header.frame_type != FrameType.DATA:
+                continue
 
-            message = data.decode()
+            data = frame.payload
+            message = data.decode(errors="replace")
 
             print(f"{address}: {message}")
-            broadcast(client_socket, data) # We can also send the data.
-    except OSError:
+            broadcast(client_socket, data)
+    except (ConnectionError, OSError, ProtocolError):
         pass
     finally:
         remove_client(client_socket)
