@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f7f5">
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+  <title>{{ 'Create account' if mode == 'register' else 'Sign in' }} · FgChat</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body class="auth-page">
+  <main class="auth-shell">
+    <section class="auth-story">
+      <a class="brand brand-light" href="{{ url_for('auth.login') }}"><span class="brand-mark">f</span><span>fg<span class="brand-soft">chat</span></span></a>
+      <div class="story-content">
+        <span class="eyebrow"><span class="eyebrow-dot"></span> A little closer, wherever you are</span>
+        <h1>Good conversations<br>start <em>here.</em></h1>
+        <p>Make room for the people who make your day. Your conversations, all in one quiet place.</p>
+        <div class="story-art" aria-hidden="true">
+          <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
+          <div class="art-bubble art-bubble-a">Hey, you free later? <span>10:42</span></div>
+          <div class="art-bubble art-bubble-b">Absolutely ✨ <span>10:43</span></div>
+          <div class="art-avatar avatar-coral">A</div><div class="art-avatar avatar-blue">J</div>
+          <div class="art-sparkle sparkle-one">✳</div><div class="art-sparkle sparkle-two">✦</div>
+        </div>
+      </div>
+      <div class="story-foot"><span>Thoughtfully made for real conversations.</span><span>© 2026 FgChat</span></div>
+    </section>
+    <section class="auth-main">
+      <div class="auth-card">
+        <div class="mobile-brand"><a class="brand" href="{{ url_for('auth.login') }}"><span class="brand-mark">f</span><span>fg<span class="brand-soft">chat</span></span></a></div>
+        <div class="auth-heading">
+          <span class="auth-kicker">{{ 'YOUR PEOPLE ARE HERE' if mode == 'login' else 'LET’S GET YOU SET UP' }}</span>
+          <h2>{{ 'Welcome back' if mode == 'login' else 'Create your account' }}</h2>
+          <p>{{ 'Sign in to pick up right where you left off.' if mode == 'login' else 'A few details and you’re ready to go.' }}</p>
+        </div>
+        {% with notices = get_flashed_messages(with_categories=true) %}
+          {% if notices %}<div class="flash-stack">{% for category, notice in notices %}<div class="flash flash-{{ category }}" role="alert">{{ notice }}</div>{% endfor %}</div>{% endif %}
+        {% endwith %}
+        <form class="auth-form" method="post" action="{{ url_for('auth.login_submit' if mode == 'login' else 'auth.register_submit') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          {% if mode == 'register' %}
+          <label class="field-label" for="display_name">Your name</label>
+          <input class="text-field" id="display_name" name="display_name" autocomplete="name" placeholder="What should we call you?" maxlength="48" value="{{ display_name|default('') }}" required>
+          {% endif %}
+          <label class="field-label" for="username">Username</label>
+          <div class="input-wrap"><span class="input-prefix">@</span><input class="text-field with-prefix" id="username" name="username" autocomplete="username" placeholder="yourname" minlength="3" maxlength="24" value="{{ username|default('') }}" required></div>
+          {% if mode == 'register' %}
+          <label class="field-label" for="email">Email <span class="field-optional">optional</span></label>
+          <input class="text-field" id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com" value="{{ email|default('') }}">
+          {% endif %}
+          <label class="field-label" for="password">Password</label>
+          <input class="text-field" id="password" name="password" type="password" autocomplete="{{ 'current-password' if mode == 'login' else 'new-password' }}" placeholder="{{ 'Your password' if mode == 'login' else 'At least 10 characters' }}" minlength="10" maxlength="128" required>
+          {% if mode == 'register' %}
+          <label class="field-label" for="confirm_password">Confirm password</label>
+          <input class="text-field" id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" placeholder="Type it once more" minlength="10" maxlength="128" required>
+          {% else %}
+          <label class="remember-row"><input type="checkbox" name="remember"><span class="custom-check"></span><span>Keep me signed in</span></label>
+          {% endif %}
+          <button class="button button-primary auth-submit" type="submit">{{ 'Sign in' if mode == 'login' else 'Create account' }}<span aria-hidden="true">→</span></button>
+        </form>
+        <p class="auth-switch">{{ 'New around here?' if mode == 'login' else 'Already have an account?' }} <a href="{{ url_for('auth.register' if mode == 'login' else 'auth.login') }}">{{ 'Create an account' if mode == 'login' else 'Sign in' }}</a></p>
+        <p class="auth-terms">By continuing, you agree to be kind to each other. That’s the whole policy.</p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
