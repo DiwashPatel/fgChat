@@ -1,53 +1,87 @@
+"""Interactive TLS client for FgChat direct conversations."""
+
+import argparse
 import getpass
 import socket
+import ssl
 import threading
+from datetime import datetime
+from pathlib import Path
 
-HOST = "127.0.0.1"
-PORT = 5000
-
-
-def receive_messages(stream):
-    for line in stream:
-        print(f"\n{line.rstrip()}\n> ", end="", flush=True)
-    print("\nServer disconnected.")
+from protocol import ProtocolError, receive_message, send_message
 
 
-def main():
-    command = input("Enter REGISTER or LOGIN, optionally followed by your username: ").strip()
-    parts = command.split(maxsplit=2)
-    action = parts[0].lower() if parts else ""
-    if action not in ("register", "login") or len(parts) > 3:
-        print("Use REGISTER [username] or LOGIN [username].")
-        return
-    username = parts[1] if len(parts) >= 2 else input("Username (3-24 letters, numbers, underscores): ").strip()
-    password = parts[2] if len(parts) == 3 else getpass.getpass("Password (10-128 characters): ")
+def show_event(event: dict) -> None:
+    kind = event.get("type")
+    if kind == "message":
+        timestamp = datetime.fromtimestamp(event["created_at"]).strftime("%H:%M")
+        print(f"\n[{timestamp}] {event['sender']} → {event['recipient']}: {event['body']}\n> ", end="", flush=True)
+    elif kind == "history":
+        messages = event.get("messages", [])
+        print(f"\nConversation with {event['with']} ({len(messages)} recent messages)")
+        for message in messages:
+            timestamp = datetime.fromtimestamp(message["created_at"]).strftime("%Y-%m-%d %H:%M")
+            print(f"  {timestamp}  {message['sender']}: {message['body']}")
+        print("> ", end="", flush=True)
+    elif kind == "error":
+        print(f"\nError: {event.get('message', 'Request failed')}\n> ", end="", flush=True)
 
-    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+def receive_loop(client: ssl.SSLSocket) -> None:
     try:
-        client.connect((HOST, PORT))
-        stream = client.makefile("r", encoding="utf-8", errors="replace")
-        print(stream.readline().rstrip())
-        client.sendall(f"{action.upper()} {username} {password}\n".encode("utf-8"))
-        result = stream.readline().rstrip()
-        print(result)
-        if not result.startswith("AUTH_OK "):
-            return
-
-        threading.Thread(target=receive_messages, args=(stream,), daemon=True).start()
         while True:
-            message = input("> ")
-            if message.lower() in ("quit", "exit"):
+            event = receive_message(client)
+            if event is None:
                 break
-            if "\n" not in message and len(message.encode("utf-8")) <= 4096:
-                client.sendall((message + "\n").encode("utf-8"))
-            else:
-                print("Messages must fit on one line and be at most 4096 bytes.")
-    except ConnectionRefusedError:
-        print(f"Could not connect to {HOST}:{PORT}")
-    except OSError as error:
-        print(f"Connection error: {error}")
-    finally:
-        client.close()
+            show_event(event)
+    except (OSError, ProtocolError) as exc:
+        print(f"\nConnection closed: {exc}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Connect to an FgChat server")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=5000)
+    parser.add_argument("--ca", type=Path, default=Path("certs/server.crt"), help="Certificate to trust")
+    args = parser.parse_args()
+    action = input("Register or login? [register/login] ").strip().lower()
+    if action not in ("register", "login"):
+        print("Choose register or login.")
+        return
+    username = input("Username: ").strip()
+    password = getpass.getpass("Password: ")
+    context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=str(args.ca))
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    try:
+        with socket.create_connection((args.host, args.port), timeout=10) as raw:
+            with context.wrap_socket(raw, server_hostname=args.host) as client:
+                send_message(client, {"action": action, "username": username, "password": password})
+                response = receive_message(client)
+                if response is None or response.get("type") != "ready":
+                    print(response.get("message", "Server closed the connection.") if response else "Server closed the connection.")
+                    return
+                print(f"Connected securely as {response['username']}.")
+                print("Commands: /to USER MESSAGE, /history USER, /quit")
+                threading.Thread(target=receive_loop, args=(client,), daemon=True).start()
+                while True:
+                    line = input("> ").strip()
+                    if line.lower() in ("/quit", "/exit"):
+                        break
+                    if line.startswith("/history "):
+                        peer = line.split(maxsplit=1)[1]
+                        send_message(client, {"action": "history", "with": peer})
+                    elif line.startswith("/to "):
+                        parts = line.split(maxsplit=2)
+                        if len(parts) != 3:
+                            print("Usage: /to USER MESSAGE")
+                            continue
+                        send_message(client, {"action": "send", "to": parts[1], "text": parts[2]})
+                    else:
+                        print("Use /to USER MESSAGE, /history USER, or /quit.")
+    except FileNotFoundError:
+        print(f"Trusted certificate not found: {args.ca}")
+    except (OSError, ssl.SSLError) as exc:
+        print(f"Could not connect securely to {args.host}:{args.port}: {exc}")
 
 
 if __name__ == "__main__":

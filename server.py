@@ -1,138 +1,174 @@
-"""Small authenticated chat server. Accounts are stored in users.sqlite3."""
-import hashlib
-import hmac
+"""Threaded TLS chat server with account authentication and persistent direct messages."""
+
+import argparse
+import logging
 import os
 import re
 import socket
-import sqlite3
+import ssl
 import threading
+from pathlib import Path
 
-HOST = "127.0.0.1"
-PORT = 5000
-DATABASE = os.path.join(os.path.dirname(__file__), "users.sqlite3")
-PBKDF2_ROUNDS = 310_000
+from protocol import ProtocolError, receive_message, send_message
+from storage import ChatStore
+
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,24}$")
-clients = {}  # socket -> authenticated username
-clients_lock = threading.Lock()
+MAX_TEXT_LENGTH = 4000
 
 
-def initialize_database():
-    with sqlite3.connect(DATABASE) as db:
-        db.execute("CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY COLLATE NOCASE, salt BLOB NOT NULL, password_hash BLOB NOT NULL)")
+class ChatServer:
+    def __init__(self, host: str, port: int, store: ChatStore, tls_context: ssl.SSLContext) -> None:
+        self.host = host
+        self.port = port
+        self.store = store
+        self.tls_context = tls_context
+        self.clients: dict[str, ssl.SSLSocket] = {}
+        self.client_send_locks: dict[ssl.SSLSocket, threading.Lock] = {}
+        self.clients_lock = threading.RLock()
+        self.stopping = threading.Event()
 
+    def send(self, client: ssl.SSLSocket, message: dict) -> None:
+        with self.clients_lock:
+            lock = self.client_send_locks.setdefault(client, threading.Lock())
+        with lock:
+            send_message(client, message)
 
-def authenticate(line):
-    """Return (username, error). Auth wire format: REGISTER|LOGIN username password."""
-    fields = line.strip().split(maxsplit=2)
-    if len(fields) != 3 or fields[0] not in ("REGISTER", "LOGIN") or not fields[2]:
-        return None, "Use REGISTER or LOGIN followed by username and password."
-    action, username, password = fields
-    if not USERNAME_RE.fullmatch(username):
-        return None, "Username must be 3-24 letters, numbers, or underscores."
-    if not 10 <= len(password) <= 128:
-        return None, "Password must be 10-128 characters."
-
-    with sqlite3.connect(DATABASE, timeout=10) as db:
-        row = db.execute("SELECT username, salt, password_hash FROM users WHERE username = ? COLLATE NOCASE", (username,)).fetchone()
-        if action == "REGISTER":
-            if row:
-                return None, "That username is already registered."
-            salt = os.urandom(16)
-            digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, PBKDF2_ROUNDS)
-            try:
-                db.execute("INSERT INTO users VALUES (?, ?, ?)", (username, salt, digest))
-            except sqlite3.IntegrityError:
-                return None, "That username is already registered."
-            return username, None
-        if not row:
-            return None, "Invalid username or password."
-        digest = hashlib.pbkdf2_hmac("sha256", password.encode(), row[1], PBKDF2_ROUNDS)
-        if not hmac.compare_digest(digest, row[2]):
-            return None, "Invalid username or password."
-        return row[0], None
-
-
-def remove_client(sock):
-    with clients_lock:
-        username = clients.pop(sock, None)
-    try:
-        sock.close()
-    except OSError:
-        pass
-    if username:
-        broadcast(f"* {username} disconnected\n", exclude=None)
-
-
-def broadcast(message, exclude):
-    data = message.encode("utf-8")
-    with clients_lock:
-        recipients = [sock for sock in clients if sock is not exclude]
-    for sock in recipients:
+    def deliver(self, username: str, message: dict) -> bool:
+        with self.clients_lock:
+            recipient = self.clients.get(username.casefold())
+        if recipient is None:
+            return False
         try:
-            sock.sendall(data)
+            self.send(recipient, message)
+            return True
         except OSError:
-            remove_client(sock)
+            return False
 
-
-def handle_client(sock, address):
-    username = None
-    try:
-        sock.sendall(b"Welcome. Send REGISTER username password or LOGIN username password.\n")
-        stream = sock.makefile("r", encoding="utf-8", errors="replace")
-        while True:
-            line = stream.readline()
-            if not line:
+    def handle(self, raw_client: socket.socket, address: tuple) -> None:
+        client = None
+        username = None
+        try:
+            raw_client.settimeout(10)
+            client = self.tls_context.wrap_socket(raw_client, server_side=True)
+            request = receive_message(client)
+            if request is None:
                 return
-            username, error = authenticate(line)
-            if error:
-                sock.sendall((f"AUTH_ERROR {error}\n").encode())
-                continue
-            break
-        with clients_lock:
-            clients[sock] = username
-        sock.sendall(f"AUTH_OK Welcome, {username}. Messages can now be sent.\n".encode())
-        broadcast(f"* {username} joined the chat\n", exclude=sock)
+            action = request.get("action")
+            supplied_name = request.get("username")
+            password = request.get("password")
+            if action not in ("register", "login") or not isinstance(supplied_name, str) or not USERNAME_RE.fullmatch(supplied_name):
+                self.send(client, {"type": "error", "message": "Use a 3–24 character username containing letters, numbers, or underscores."})
+                return
+            if not isinstance(password, str) or not 10 <= len(password) <= 128:
+                self.send(client, {"type": "error", "message": "Password must contain 10–128 characters."})
+                return
+            if action == "register":
+                if not self.store.register(supplied_name, password):
+                    self.send(client, {"type": "error", "message": "That username is already registered."})
+                    return
+                username = supplied_name
+            else:
+                username = self.store.authenticate(supplied_name, password)
+                if username is None:
+                    self.send(client, {"type": "error", "message": "Invalid username or password."})
+                    return
+            with self.clients_lock:
+                if username.casefold() in self.clients:
+                    self.send(client, {"type": "error", "message": "This account is already connected."})
+                    return
+                self.clients[username.casefold()] = client
+                self.client_send_locks[client] = threading.Lock()
+            client.settimeout(None)
+            self.send(client, {"type": "ready", "username": username})
+            logging.info("%s connected from %s:%s", username, *address)
+            while not self.stopping.is_set():
+                request = receive_message(client)
+                if request is None:
+                    break
+                if request.get("action") == "send":
+                    self.handle_send(client, username, request)
+                elif request.get("action") == "history":
+                    peer = request.get("with")
+                    if not isinstance(peer, str) or not USERNAME_RE.fullmatch(peer) or not self.store.user_exists(peer):
+                        self.send(client, {"type": "error", "message": "Choose an existing username for history."})
+                    else:
+                        self.send(client, {"type": "history", "with": peer, "messages": self.store.history(username, peer)})
+                else:
+                    self.send(client, {"type": "error", "message": "Unknown action."})
+        except (OSError, ProtocolError, ssl.SSLError) as exc:
+            logging.debug("Connection %s ended: %s", address, exc)
+        finally:
+            if username:
+                with self.clients_lock:
+                    if self.clients.get(username.casefold()) is client:
+                        self.clients.pop(username.casefold(), None)
+                    self.client_send_locks.pop(client, None)
+                logging.info("%s disconnected", username)
+            if client is not None:
+                try:
+                    client.close()
+                except OSError:
+                    pass
+            else:
+                raw_client.close()
 
-        for line in stream:
-            message = line.rstrip("\r\n")
-            if not message:
-                continue
-            if len(message.encode("utf-8")) > 4096:
-                sock.sendall(b"Message too long (maximum 4096 bytes).\n")
-                continue
-            print(f"{username}@{address}: {message}")
-            broadcast(f"{username}: {message}\n", exclude=sock)
-    except (OSError, UnicodeError):
-        pass
-    finally:
-        if username:
-            remove_client(sock)
-        else:
-            try:
-                sock.close()
-            except OSError:
-                pass
+    def handle_send(self, client: ssl.SSLSocket, sender: str, request: dict) -> None:
+        recipient = request.get("to")
+        body = request.get("text")
+        if not isinstance(recipient, str) or not USERNAME_RE.fullmatch(recipient) or not isinstance(body, str):
+            self.send(client, {"type": "error", "message": "Provide a valid recipient and message."})
+            return
+        body = body.strip()
+        if not body or len(body.encode("utf-8")) > MAX_TEXT_LENGTH:
+            self.send(client, {"type": "error", "message": "Messages must contain 1–4000 UTF-8 bytes."})
+            return
+        if not self.store.user_exists(recipient):
+            self.send(client, {"type": "error", "message": "That user does not exist."})
+            return
+        canonical_recipient = recipient
+        message = self.store.save_message(sender, canonical_recipient, body)
+        event = {"type": "message", **message}
+        self.send(client, event)
+        self.deliver(canonical_recipient.casefold(), event)
+
+    def serve_forever(self) -> None:
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind((self.host, self.port))
+        listener.listen(128)
+        listener.settimeout(1)
+        logging.info("Listening on %s:%s with TLS", self.host, self.port)
+        try:
+            while not self.stopping.is_set():
+                try:
+                    client, address = listener.accept()
+                except socket.timeout:
+                    continue
+                threading.Thread(target=self.handle, args=(client, address), daemon=True).start()
+        finally:
+            self.stopping.set()
+            listener.close()
+            with self.clients_lock:
+                clients = list(self.clients.values())
+            for client in clients:
+                client.close()
 
 
-def main():
-    initialize_database()
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind((HOST, PORT))
-    server.listen()
-    print(f"Server started on {HOST}:{PORT} (pid {os.getpid()})")
-    try:
-        while True:
-            sock, address = server.accept()
-            threading.Thread(target=handle_client, args=(sock, address), daemon=True).start()
-    except KeyboardInterrupt:
-        print("\nStopping server.")
-    finally:
-        server.close()
-        with clients_lock:
-            active = list(clients)
-        for sock in active:
-            sock.close()
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Encrypted FgChat TCP server")
+    parser.add_argument("--host", default=os.getenv("FGCHAT_HOST", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=int(os.getenv("FGCHAT_PORT", "5000")))
+    parser.add_argument("--database", type=Path, default=Path(os.getenv("FGCHAT_DATABASE", "users.sqlite3")))
+    parser.add_argument("--cert", type=Path, default=Path(os.getenv("FGCHAT_TLS_CERT", "certs/server.crt")))
+    parser.add_argument("--key", type=Path, default=Path(os.getenv("FGCHAT_TLS_KEY", "certs/server.key")))
+    args = parser.parse_args()
+    if not args.cert.is_file() or not args.key.is_file():
+        parser.error("TLS certificate not found; run ./scripts/create-dev-cert.sh for local development")
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(args.cert, args.key)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    ChatServer(args.host, args.port, ChatStore(args.database), context).serve_forever()
 
 
 if __name__ == "__main__":
