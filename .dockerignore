@@ -1,0 +1,10 @@
+.git
+.venv
+__pycache__
+*.py[cod]
+.env
+instance
+users.sqlite3
+generated
+proto
+classwork

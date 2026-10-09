@@ -1,41 +1,78 @@
 # FgChat
 
-FgChat is a small encrypted, threaded TCP chat application built with the Python standard library. It demonstrates TLS transport security, account authentication, direct messaging, and persistent conversation history with SQLite.
+A responsive, browser-based chat application built using Codex. FgChat pairs a Flask application with a realtime Socket.IO layer, SQLAlchemy persistence, and browser WebRTC voice calling.
 
-## Run locally
+## Run it locally
 
-Python 3.10+ and OpenSSL are required. No third-party Python packages are needed.
-
-```sh
-./scripts/create-dev-cert.sh
-python3 server.py
-```
-
-In another terminal:
+Requirements: Python 3.12+ and internet access for the first virtual-environment dependency install. Setup and runtime dependencies stay inside `.venv/`. No system Python packages or global settings are changed.
 
 ```sh
-python3 client.py
+./scripts/setup.sh
+./scripts/dev.sh
 ```
 
-Start a second client with a different account. Use `/to USERNAME hello` to send a direct message, `/history USERNAME` to view the latest 50 messages, and `/quit` to disconnect. Registration requires a unique username of 3–24 letters, digits, or underscores, and a password of 10–128 characters.
+Open [http://127.0.0.1:5000](http://127.0.0.1:5000), create an account, then open another browser profile and create a second account. Search for the other username to begin a private conversation. Messages update live and remain available after sign-in. Use the phone icon in a conversation to place or answer a one-to-one voice call. Browsers ask for microphone permission when a call is accepted.
 
-The server listens on `127.0.0.1:5000` by default. Configure deployment with `FGCHAT_HOST`, `FGCHAT_PORT`, `FGCHAT_DATABASE`, `FGCHAT_TLS_CERT`, and `FGCHAT_TLS_KEY`, or their corresponding server command line options. The client accepts `--host`, `--port`, and `--ca`. For a real deployment, use a DNS name, a certificate issued for that name by a trusted CA, a protected key file, and a durable database location. Do not use the generated development certificate on a public server.
+The setup script creates the project-local `.venv/` and an ignored `.env` containing random app and database secrets. `scripts/dev.sh` applies database migrations before starting the server. The default database is SQLite at `instance/fgchat.sqlite3`; the existing socket prototype database is kept separate.
 
-## Design
+## Features
 
-- `protocol.py` implements a 4-byte length-prefixed UTF-8 JSON protocol with a 64 KiB frame limit.
-- `server.py` handles clients on separate threads, requires TLS 1.2 or newer, validates requests, and routes messages to connected recipients.
-- `storage.py` stores users and conversation messages in SQLite. Passwords use salted PBKDF2-HMAC-SHA256 hashes; plaintext passwords are never stored.
-- `client.py` verifies the server certificate and provides an interactive terminal interface.
+- Account registration, sign-in, sign-out, password hashing with scrypt, CSRF protection, HttpOnly/SameSite session cookies with secure-cookie support, and rate limits on account forms.
+- Search registered users and create one-to-one conversations. Conversation membership is checked on every history and realtime operation.
+- Persistent text history with cursor-based loading, unread counts, typing indicators, online presence, and read receipts.
+- Browser voice calls through WebRTC with Socket.IO signaling, ICE server configuration, microphone mute, and call controls. Call audio is negotiated directly between browsers; the Flask service does not relay audio.
+- PostgreSQL support, Alembic migrations, optional Redis-backed Socket.IO fanout, distributed presence and call state, Redis-backed rate limiting, and a container setup.
+- Account records separate provider identity (`auth_provider` and `provider_subject`) from the local password flow so an OAuth provider can be added without changing conversation ownership.
 
-Messages are encrypted in transit with TLS and stored as plaintext in the local SQLite database. This is transport encryption, not end-to-end encryption: the server can read messages. An internet-facing deployment also needs operational controls such as firewalling, rate limits, backups, monitoring, and a production identity/certificate setup. The threaded server and SQLite are intended for a focused learning/demo deployment, not large-scale multi-node service.
+## Verify changes
 
-## TCP connection and authentication
+The setup script installs the development tools in `.venv/`. Run the application tests, Python lint checks, and browser client syntax check from the project root:
 
-A TCP three-way handshake (SYN, SYN-ACK, ACK) establishes a transport connection to a listening port; it does not authenticate a user or prove that the caller is trusted. The operating system routes the connection to the process listening on that port. The server then performs a TLS handshake to establish encryption and authenticate the server certificate to the client. After that, the application protocol carries the login or registration request, and FgChat checks the supplied credentials against its account database. A reachable server can receive connection attempts before application login, so production systems also need connection limits and abuse controls.
+```sh
+.venv/bin/python -m pytest
+.venv/bin/ruff check app migrations run.py gunicorn.conf.py tests
+```
 
-TCP carries an ordered byte stream, not application packets or HTTP objects. TLS and the application protocol interpret those bytes above TCP. FgChat uses a length prefix to delimit each JSON message because TCP does not preserve send boundaries.
+## Run with containers
 
-## Scope
+Docker Compose starts the web service, PostgreSQL, and Redis. Create local environment values, then launch the stack:
 
-The current client supports authenticated one-to-one text conversations. Group broadcast, a graphical web interface, voice/video calls, and WebRTC signaling/media are not implemented. WebRTC needs a browser or compatible media client, signaling, and usually ICE/STUN/TURN infrastructure; sending audio frames through this raw TCP chat protocol would not implement WebRTC.
+```sh
+./scripts/create-compose-env.sh
+docker compose up --build
+```
+
+The web container listens on port 8000 at loopback. Put it behind a TLS reverse proxy before exposing it publicly. Compose enables secure cookies by default; use `FGCHAT_COOKIE_SECURE=0` for local plain-HTTP container testing only.
+
+For a direct Linux deployment, install `requirements.txt` in a virtual environment, set the environment described in `.env.example`, run `flask --app run db upgrade`, then start `gunicorn --config gunicorn.conf.py run:app`. Gunicorn uses its threaded worker with the WebSocket-capable `simple-websocket` transport. One worker is configured by default. To run multiple instances, set `FGCHAT_SOCKETIO_REDIS_URL` to a shared Redis URL and use a load balancer that keeps each Socket.IO connection on the same instance. Set `FGCHAT_PROXY_FIX_HOPS` to the number of trusted reverse-proxy hops if rate limits need the original client IP; only trust headers from proxies you control. Use PostgreSQL for shared durable application data.
+
+## Voice calling setup
+
+Local calls can connect through the configured public STUN server when the two networks allow direct peer connectivity. For calls across restrictive NATs and enterprise firewalls, provide a TURN service:
+
+- `FGCHAT_TURN_URL` should be a `turn:` or `turns:` URL.
+- For coturn REST authentication, set `FGCHAT_TURN_SHARED_SECRET`. FgChat creates short-lived, account-scoped ICE credentials.
+- Static `FGCHAT_TURN_USERNAME` and `FGCHAT_TURN_CREDENTIAL` are available for small private installations, but short-lived TURN credentials are preferred for public services.
+
+Browsers require a secure context for microphone access. `localhost` is secure for local development; deployed sites must use HTTPS. Configure DNS, TLS termination, TURN capacity, and firewall rules for the networks where users will call.
+
+## Architecture
+
+```text
+app/
+  auth/       Registration and session routes
+  chat/       Conversation APIs, authorization, and realtime signaling
+  static/     Responsive interface, browser client, and Socket.IO client
+  templates/  Sign-in, registration, and chat views
+  models.py   User, conversation, and message records
+migrations/   Versioned database schema
+scripts/      Local setup and container startup
+```
+
+The HTTP API handles account and conversation reads. Socket.IO handles message delivery, presence, typing, receipts, and WebRTC signaling. SQLAlchemy models are database-independent; SQLite serves local development and PostgreSQL is suitable for deployed instances. Redis coordinates Socket.IO rooms, online sessions, active calls, and request limits across service instances. Schema changes are managed through Flask-Migrate.
+
+Messages are encrypted in transit when the application is served over HTTPS/WSS, and WebRTC media uses browser-managed DTLS-SRTP. Message bodies are stored as plaintext in the database, so this is not end-to-end encrypted chat. Configure encrypted database volumes, backups, access controls, and TLS in deployment. Voice call success depends on browser permissions, ICE connectivity, and TURN availability; calls should be exercised on the intended network before launch.
+
+The current app is one-to-one text and voice. Group conversations, file sharing, message moderation/block rules, Google sign-in, and video calls are not included. The schema and route boundaries keep identity, messaging, and delivery policy separate so those features can be added without coupling passwords to conversations.
+
+The browser Socket.IO client is vendored from Socket.IO 4.8.1 under its MIT license.

@@ -1,0 +1,57 @@
+services:
+  web:
+    build: .
+    restart: unless-stopped
+    environment:
+      FGCHAT_SECRET_KEY: ${FGCHAT_SECRET_KEY:?Set FGCHAT_SECRET_KEY in .env}
+      FGCHAT_COOKIE_SECURE: ${FGCHAT_COOKIE_SECURE:-1}
+      FGCHAT_SOCKETIO_REDIS_URL: redis://redis:6379/0
+      RATELIMIT_STORAGE_URI: redis://redis:6379/1
+      DATABASE_URL: postgresql+psycopg://fgchat:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@database:5432/fgchat
+      FGCHAT_TURN_URL: ${FGCHAT_TURN_URL:-}
+      FGCHAT_TURN_USERNAME: ${FGCHAT_TURN_USERNAME:-}
+      FGCHAT_TURN_CREDENTIAL: ${FGCHAT_TURN_CREDENTIAL:-}
+      FGCHAT_TURN_SHARED_SECRET: ${FGCHAT_TURN_SHARED_SECRET:-}
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", ".venv/bin/python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  database:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: fgchat
+      POSTGRES_USER: fgchat
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fgchat -d fgchat"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:
