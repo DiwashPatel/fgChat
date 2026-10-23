@@ -10,3 +10,5 @@ instance/
 .pytest_cache/
 .coverage
 .ruff_cache/
+test-results/
+playwright-report/

@@ -33,6 +33,40 @@ The setup script installs the development tools in `.venv/`. Run the application
 .venv/bin/ruff check app migrations run.py gunicorn.conf.py tests
 ```
 
+### Real browser tests
+
+The Playwright tests in `tests/browser/` launch a real local HTTP/WebSocket server and
+two independent browser sessions. Each test uses a temporary SQLite database created
+through the migrations; your local accounts, database, and `.env` are not used. CSRF
+protection stays enabled. External font requests are blocked so the suite does not
+depend on Google Fonts.
+
+Install Chromium once after setup, keeping its download inside the project:
+
+```sh
+export PLAYWRIGHT_BROWSERS_PATH="$PWD/.venv/playwright-browsers"
+.venv/bin/python -m playwright install chromium
+.venv/bin/python -m pytest tests/browser --tracing retain-on-failure --screenshot only-on-failure
+```
+
+Set the same `PLAYWRIGHT_BROWSERS_PATH` in each new shell before running browser tests.
+Add `--headed` to watch the tests. Failure screenshots and traces appear in the ignored
+`test-results/` directory. Open a trace with
+`.venv/bin/python -m playwright show-trace path/to/trace.zip`.
+
+Coverage includes live messages and read receipts, persisted history after signing
+out and back in, unread badges, typing indicators, safe rendering of HTML-like text,
+mobile back navigation, multiline composing, draft preservation during a connection
+loss and sending after reconnect, declining calls, and actual browser microphone denial.
+The microphone-denial case uses Chromium's permission API; successful WebRTC audio
+and TURN connectivity across networks still need separate coverage.
+
+Run the server-side tests without launching a browser with:
+
+```sh
+.venv/bin/python -m pytest -m "not browser"
+```
+
 ## Run with containers
 
 Docker Compose starts the web service, PostgreSQL, and Redis. Create local environment values, then launch the stack:
