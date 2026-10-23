@@ -57,6 +57,9 @@ class Conversation(db.Model):
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
     user_a = db.relationship(User, foreign_keys=[user_a_id])
     user_b = db.relationship(User, foreign_keys=[user_b_id])
+    memberships = db.relationship(
+        "ConversationMember", back_populates="conversation", cascade="all, delete-orphan"
+    )
     messages = db.relationship(
         "Message",
         back_populates="conversation",
@@ -66,10 +69,21 @@ class Conversation(db.Model):
     )
 
     def includes(self, user_id: int) -> bool:
-        return user_id in (self.user_a_id, self.user_b_id)
+        return any(member.user_id == user_id for member in self.memberships)
 
     def peer_for(self, user_id: int) -> User:
         return self.user_b if user_id == self.user_a_id else self.user_a
+
+
+class ConversationMember(db.Model):
+    __tablename__ = "conversation_members"
+    __table_args__ = (db.Index("ix_conversation_members_user", "user_id", "conversation_id"),)
+
+    conversation_id = db.Column(
+        db.Integer, db.ForeignKey("conversations.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    conversation = db.relationship(Conversation, back_populates="memberships")
 
 
 class Message(db.Model):

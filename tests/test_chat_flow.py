@@ -2,7 +2,7 @@ import unittest
 
 from app import create_app
 from app.extensions import db, socketio
-from app.models import Message, User
+from app.models import Conversation, ConversationMember, Message, User
 
 
 class ChatFlowTest(unittest.TestCase):
@@ -110,6 +110,15 @@ class ChatFlowTest(unittest.TestCase):
         conversation_id = created.json["conversation"]["id"]
         repeated = self.alice_http.post("/api/conversations", json={"user_id": self.bob_id})
         self.assertEqual(repeated.json["conversation"]["id"], conversation_id)
+        reverse = self.bob_http.post("/api/conversations", json={"user_id": self.alice_id})
+        self.assertEqual(reverse.json["conversation"]["id"], conversation_id)
+        with self.app.app_context():
+            members = db.session.scalars(
+                db.select(ConversationMember.user_id).where(
+                    ConversationMember.conversation_id == conversation_id
+                )
+            ).all()
+            self.assertCountEqual(members, [self.alice_id, self.bob_id])
         self.assertEqual(
             self.bob_http.get(f"/api/conversations/{conversation_id}/messages").status_code, 200
         )
@@ -207,6 +216,74 @@ class ChatFlowTest(unittest.TestCase):
             [],
         )
         outsider_socket.disconnect()
+
+    def test_removing_membership_revokes_http_and_socket_access(self):
+        conversation_id = self.alice_http.post(
+            "/api/conversations", json={"user_id": self.bob_id}
+        ).json["conversation"]["id"]
+        with self.app.app_context():
+            db.session.add(
+                Message(
+                    conversation_id=conversation_id, sender_id=self.alice_id, body="Private message"
+                )
+            )
+            db.session.delete(db.session.get(ConversationMember, (conversation_id, self.bob_id)))
+            db.session.commit()
+            conversation = db.session.get(Conversation, conversation_id)
+            self.assertTrue(conversation.includes(self.alice_id))
+            self.assertFalse(conversation.includes(self.bob_id))
+
+        self.assertEqual(self.bob_http.get("/api/conversations").json["conversations"], [])
+        self.assertEqual(
+            self.bob_http.get(f"/api/conversations/{conversation_id}/messages").status_code, 404
+        )
+        self.assertEqual(
+            self.bob_http.post("/api/conversations", json={"user_id": self.alice_id}).status_code,
+            404,
+        )
+        alice_socket = socketio.test_client(self.app, flask_test_client=self.alice_http)
+        bob_socket = socketio.test_client(self.app, flask_test_client=self.bob_http)
+        try:
+            alice_socket.get_received()
+            bob_socket.get_received()
+            data = {"conversation_id": conversation_id}
+            alice_socket.emit("conversation:join", data)
+            bob_socket.emit("conversation:join", data)
+            socketio.emit("test:membership", {}, to=f"conversation:{conversation_id}")
+            self.assertEqual(
+                [event["name"] for event in alice_socket.get_received()], ["test:membership"]
+            )
+            self.assertEqual(bob_socket.get_received(), [])
+            bob_socket.emit("message:send", {**data, "body": "No access"})
+            bob_socket.emit("message:read", data)
+            bob_socket.emit("typing:set", {**data, "typing": True})
+            self.assertEqual([event["name"] for event in bob_socket.get_received()], ["app:error"])
+            self.assertEqual(alice_socket.get_received(), [])
+            with self.app.app_context():
+                [message] = db.session.scalars(db.select(Message)).all()
+                self.assertEqual(message.body, "Private message")
+                self.assertIsNone(message.read_at)
+        finally:
+            alice_socket.disconnect()
+            bob_socket.disconnect()
+
+    def test_membership_grants_access_independently_of_direct_pair(self):
+        member_http = self.app.test_client()
+        member_id = self.register(member_http, "charlie", "Charlie")
+        conversation_id = self.alice_http.post(
+            "/api/conversations", json={"user_id": self.bob_id}
+        ).json["conversation"]["id"]
+        with self.app.app_context():
+            db.session.add(ConversationMember(conversation_id=conversation_id, user_id=member_id))
+            db.session.commit()
+            self.assertTrue(db.session.get(Conversation, conversation_id).includes(member_id))
+        self.assertEqual(
+            member_http.get(f"/api/conversations/{conversation_id}/messages").status_code, 200
+        )
+        self.assertEqual(
+            [item["id"] for item in member_http.get("/api/conversations").json["conversations"]],
+            [conversation_id],
+        )
 
 
 if __name__ == "__main__":

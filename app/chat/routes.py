@@ -13,7 +13,7 @@ from sqlalchemy.orm import joinedload
 
 from app.chat import chat_bp
 from app.extensions import db, socketio
-from app.models import Conversation, Message, User
+from app.models import Conversation, ConversationMember, Message, User
 
 PAGE_SIZE = 50
 
@@ -24,9 +24,7 @@ def conversation_for_user(conversation_id: int) -> Conversation | None:
         .options(joinedload(Conversation.user_a), joinedload(Conversation.user_b))
         .where(
             Conversation.id == conversation_id,
-            or_(
-                Conversation.user_a_id == current_user.id, Conversation.user_b_id == current_user.id
-            ),
+            Conversation.memberships.any(ConversationMember.user_id == current_user.id),
         )
     )
 
@@ -73,11 +71,7 @@ def conversations():
     items = db.session.scalars(
         db.select(Conversation)
         .options(joinedload(Conversation.user_a), joinedload(Conversation.user_b))
-        .where(
-            or_(
-                Conversation.user_a_id == current_user.id, Conversation.user_b_id == current_user.id
-            )
-        )
+        .where(Conversation.memberships.any(ConversationMember.user_id == current_user.id))
     ).all()
     ids = [item.id for item in items]
     latest_by_conversation = {}
@@ -159,6 +153,10 @@ def create_conversation():
     )
     if conversation is None:
         conversation = Conversation(user_a_id=low_id, user_b_id=high_id)
+        conversation.memberships = [
+            ConversationMember(user_id=low_id),
+            ConversationMember(user_id=high_id),
+        ]
         db.session.add(conversation)
         try:
             db.session.commit()
@@ -169,6 +167,8 @@ def create_conversation():
                     Conversation.user_a_id == low_id, Conversation.user_b_id == high_id
                 )
             )
+    if not conversation.includes(current_user.id):
+        return jsonify(error="Conversation not found."), 404
     return jsonify(conversation={"id": conversation.id, "peer": peer.public_profile()}), 200
 
 
