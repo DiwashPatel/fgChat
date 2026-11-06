@@ -1,0 +1,160 @@
+
+<!DOCTYPE html>
+<html>
+<body>
+  <h2>fgChat - Voice Call</h2>
+
+  <button id="join">Join Call</button>
+  <button id="mute" disabled>Mute</button>
+  <button id="hangup" disabled>Hang Up</button>
+
+  <p id="status">Not connected</p>
+  <audio id="remote" autoplay controls></audio>
+
+  <script>
+    const join = document.getElementById("join");
+    const mute = document.getElementById("mute");
+    const hangup = document.getElementById("hangup");
+    const status = document.getElementById("status");
+    const audio = document.getElementById("remote");
+
+    let ws;
+    let pc;
+    let stream;
+    let pendingCandidates = [];
+
+    function send(data) {
+      ws.send(JSON.stringify(data));
+    }
+
+    async function cleanup() {
+      if (pc) pc.close();
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+      pc = null;
+      stream = null;
+      pendingCandidates = [];
+      audio.srcObject = null;
+      join.disabled = false;
+      mute.disabled = true;
+      hangup.disabled = true;
+      mute.textContent = "Mute";
+    }
+
+    async function flushCandidates() {
+      for (const candidate of pendingCandidates) {
+        await pc.addIceCandidate(candidate);
+      }
+      pendingCandidates = [];
+    }
+
+    join.onclick = async () => {
+      join.disabled = true;
+
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: true
+        });
+
+        pc = new RTCPeerConnection({
+          iceServers: []
+        });
+
+        stream.getTracks().forEach(track => {
+          pc.addTrack(track, stream);
+        });
+
+        pc.ontrack = (event) => {
+          audio.srcObject = event.streams[0];
+          audio.play().catch(console.error);
+        };
+
+        pc.onicecandidate = (event) => {
+          if (event.candidate && ws.readyState === WebSocket.OPEN) {
+            send({
+              type: "candidate",
+              candidate: event.candidate
+            });
+          }
+        };
+
+        pc.onconnectionstatechange = () => {
+          status.textContent = "WebRTC: " + pc.connectionState;
+        };
+
+        ws = new WebSocket(
+          (location.protocol === "https:" ? "wss://" : "ws://")
+          + location.host + "/ws"
+        );
+
+        ws.onmessage = async (event) => {
+          const data = JSON.parse(event.data);
+
+          if (data.type === "ready" && data.caller) {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            send({ type: "offer", sdp: pc.localDescription });
+          }
+
+          if (data.type === "offer") {
+            await pc.setRemoteDescription(data.sdp);
+            await flushCandidates();
+
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            send({ type: "answer", sdp: pc.localDescription });
+          }
+
+          if (data.type === "answer") {
+            await pc.setRemoteDescription(data.sdp);
+            await flushCandidates();
+          }
+
+          if (data.type === "candidate") {
+            if (pc.remoteDescription) {
+              await pc.addIceCandidate(data.candidate);
+            } else {
+              pendingCandidates.push(data.candidate);
+            }
+          }
+
+          if (data.type === "left") {
+            status.textContent = "Other person left";
+            ws.close();
+            await cleanup();
+          }
+        };
+
+        ws.onclose = async () => {
+          if (pc) {
+            status.textContent = "Signaling disconnected";
+            await cleanup();
+          }
+        };
+
+        mute.disabled = false;
+        hangup.disabled = false;
+        status.textContent = "Waiting for another person...";
+
+      } catch (error) {
+        status.textContent = error.message;
+        if (ws) ws.close();
+        await cleanup();
+      }
+    };
+
+    mute.onclick = () => {
+      const track = stream.getAudioTracks()[0];
+      track.enabled = !track.enabled;
+      mute.textContent = track.enabled ? "Mute" : "Unmute";
+    };
+
+    hangup.onclick = async () => {
+      ws.close();
+      await cleanup();
+      status.textContent = "Call ended";
+    };
+  </script>
+</body>
+</html>
