@@ -13,13 +13,16 @@ Requirements: Python 3.12+ and internet access for the first virtual-environment
 
 Open [http://127.0.0.1:5000](http://127.0.0.1:5000), create an account, then open another browser profile and create a second account. Search for the other username to begin a private conversation. Messages update live and remain available after sign-in. Use the phone icon in a conversation to place or answer a one-to-one voice call. Browsers ask for microphone permission when a call is accepted.
 
+To start a group, click **＋**, check **Create a group chat**, enter a name, and search for at least two other people. Click **Add** beside each person, then **Create group**. Everyone selected sees the group immediately. The conversation details button shows its members.
+
 The setup script creates the project-local `.venv/` and an ignored `.env` containing random app and database secrets. `scripts/dev.sh` applies database migrations before starting the server. The default database is SQLite at `instance/fgchat.sqlite3`; the existing socket prototype database is kept separate.
 
 ## Features
 
 - Account registration, sign-in, sign-out, password hashing with scrypt, CSRF protection, HttpOnly/SameSite session cookies with secure-cookie support, and rate limits on account forms.
-- Search registered users and create one-to-one conversations. Conversation membership is checked on every history and realtime operation.
-- Persistent text history with cursor-based loading, unread counts, typing indicators, online presence, and read receipts.
+- Search registered users and create one-to-one conversations or named group chats. Conversation membership is checked on every history and realtime operation.
+- Groups include sender names, typing indicators, persistent history, and separate unread counts for each member. Membership is fixed at creation; no roles, invitations, or member-management workflow.
+- Persistent text history with cursor-based loading, unread counts, typing indicators, online presence, and one-to-one read receipts.
 - Browser voice calls through WebRTC with Socket.IO signaling, ICE server configuration, microphone mute, and call controls. Call audio is negotiated directly between browsers; the Flask service does not relay audio.
 - PostgreSQL support, Alembic migrations, optional Redis-backed Socket.IO fanout, distributed presence and call state, Redis-backed rate limiting, and a container setup.
 - Account records separate provider identity (`auth_provider` and `provider_subject`) from the local password flow so an OAuth provider can be added without changing conversation ownership.
@@ -36,7 +39,7 @@ The setup script installs the development tools in `.venv/`. Run the application
 ### Real browser tests
 
 The Playwright tests in `tests/browser/` launch a real local HTTP/WebSocket server and
-two independent browser sessions. Each test uses a temporary SQLite database created
+independent browser sessions (three for the group chat test). Each test uses a temporary SQLite database created
 through the migrations; your local accounts, database, and `.env` are not used. CSRF
 protection stays enabled. External font requests are blocked so the suite does not
 depend on Google Fonts.
@@ -58,6 +61,7 @@ Coverage includes live messages and read receipts, persisted history after signi
 out and back in, unread badges, typing indicators, safe rendering of HTML-like text,
 mobile back navigation, multiline composing, draft preservation during a connection
 loss and sending after reconnect, declining calls, and actual browser microphone denial.
+Group coverage includes creating a group on mobile, selecting/removing members before creation, live delivery to three people, sender names, typing, unread badges, and history after reload.
 The microphone-denial case uses Chromium's permission API; successful WebRTC audio
 and TURN connectivity across networks still need separate coverage.
 
@@ -107,6 +111,6 @@ The HTTP API handles account and conversation reads. Socket.IO handles message d
 
 Messages are encrypted in transit when the application is served over HTTPS/WSS, and WebRTC media uses browser-managed DTLS-SRTP. Message bodies are stored as plaintext in the database, so this is not end-to-end encrypted chat. Configure encrypted database volumes, backups, access controls, and TLS in deployment. Voice call success depends on browser permissions, ICE connectivity, and TURN availability; calls should be exercised on the intended network before launch.
 
-The current app is one-to-one text and voice. Group conversations, file sharing, message moderation/block rules, Google sign-in, and video calls are not included. The schema and route boundaries keep identity, messaging, and delivery policy separate so those features can be added without coupling passwords to conversations.
+The app supports one-to-one text and voice plus group text chats. Group calls, group read receipts, editing group membership, file sharing, message moderation/block rules, Google sign-in, and video calls are not included. The schema and route boundaries keep identity, messaging, and delivery policy separate so those features can be added without coupling passwords to conversations.
 
 The browser Socket.IO client is vendored from Socket.IO 4.8.1 under its MIT license.

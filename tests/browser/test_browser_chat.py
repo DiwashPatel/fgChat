@@ -143,3 +143,84 @@ def test_voice_call_can_be_declined_or_microphone_denied(conversation, action):
     expect(bob.get_by_role("dialog", name="Voice call")).to_be_hidden()
     send(bob, "Still able to chat")
     expect(alice.locator(".message-bubble")).to_have_text("Still able to chat")
+
+
+def test_group_picker_live_chat_individual_unread_and_persisted_history(
+    users, new_context, live_url, tmp_path
+):
+    alice, bob = users
+    context = new_context()
+    context.route("https://fonts.googleapis.com/**", lambda route: route.abort())
+    context.route("https://fonts.gstatic.com/**", lambda route: route.abort())
+    charlie = context.new_page()
+    charlie.goto(f"{live_url}/auth/register")
+    charlie.get_by_label("Your name", exact=True).fill("Charlie")
+    charlie.get_by_label("Username", exact=True).fill("charlie")
+    charlie.get_by_label("Password", exact=True).fill("correct-horse-battery")
+    charlie.get_by_label("Confirm password", exact=True).fill("correct-horse-battery")
+    charlie.get_by_role("button", name="Create account").click()
+    expect(charlie.locator("#profile-name")).to_have_text("Charlie")
+    errors = []
+    for page in (alice, bob, charlie):
+        page.on("pageerror", lambda error: errors.append(str(error)))
+
+    alice.set_viewport_size({"width": 390, "height": 844})
+    alice.get_by_role("button", name="Start a new conversation").click()
+    alice.get_by_label("Create a group chat").check()
+    alice.get_by_label("Group name", exact=True).fill("Study group")
+    create = alice.get_by_role("button", name="Create group", exact=True)
+    expect(create).to_be_disabled()
+    for username in ("bobby", "charlie"):
+        alice.get_by_placeholder("Try a name or @username").fill(username)
+        alice.locator("#search-results").get_by_role("button", name="Add", exact=True).click()
+    alice.get_by_role("button", name="Remove Bobby").click()
+    expect(create).to_be_disabled()
+    alice.get_by_placeholder("Try a name or @username").fill("bobby")
+    alice.locator("#search-results").get_by_role("button", name="Add", exact=True).click()
+    alice.screenshot(path=str(tmp_path / "group-picker-mobile.png"))
+    expect(create).to_be_enabled()
+    create.click()
+    expect(alice.locator("#peer-name")).to_have_text("Study group")
+    expect(alice.locator("#peer-status")).to_have_text("3 members")
+    expect(alice.get_by_role("button", name="Start voice call")).to_be_hidden()
+    for page in (bob, charlie):
+        expect(
+            page.get_by_role("button", name="Open conversation with Study group")
+        ).to_be_visible()
+
+    send(alice, "Hello study group")
+    for page in (bob, charlie):
+        expect(page.locator(".unread-badge")).to_have_text("1")
+    bob.get_by_role("button", name="Open conversation with Study group").click()
+    expect(bob.locator(".message-bubble")).to_have_text("Hello study group")
+    expect(bob.locator(".message-sender")).to_have_text("Alice")
+    expect(bob.locator(".unread-badge")).to_have_count(0)
+    charlie.reload()
+    expect(charlie.locator(".message-bubble")).to_have_text("Hello study group")
+    bob.get_by_role("textbox", name="Message", exact=True).fill("Bobby is here")
+    expect(alice.locator("#typing-label")).to_have_text("Bobby is typing")
+    expect(charlie.locator("#typing-label")).to_have_text("Bobby is typing")
+    bob.get_by_role("button", name="Send message", exact=True).click()
+    send(charlie, "Charlie is here")
+    for page in (alice, bob, charlie):
+        expect(page.locator(".message-bubble")).to_have_text(
+            [
+                "Hello study group",
+                "Bobby is here",
+                "Charlie is here",
+            ]
+        )
+        expect(page.locator(".read-mark")).to_have_count(0)
+    alice.screenshot(path=str(tmp_path / "group-chat-mobile.png"))
+    alice.reload()
+    expect(alice.locator("#peer-name")).to_have_text("Study group")
+    expect(alice.locator(".message-bubble")).to_have_text(
+        [
+            "Hello study group",
+            "Bobby is here",
+            "Charlie is here",
+        ]
+    )
+    alice.get_by_role("button", name="Conversation details").click()
+    expect(alice.locator("#toast-stack")).to_contain_text("Charlie (@charlie)")
+    assert errors == []

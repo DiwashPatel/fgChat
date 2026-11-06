@@ -29,11 +29,12 @@ def test_membership_migration_backfills_existing_chats_and_preserves_data(tmp_pa
                 ]
             )
             db.session.flush()
-            db.session.add_all(
-                [
-                    Conversation(id=10, user_a_id=1, user_b_id=2),
-                    Conversation(id=20, user_a_id=2, user_b_id=3),
-                ]
+            # Seed the historical schema without today's ORM-only columns.
+            db.session.execute(
+                db.text("""
+                INSERT INTO conversations (id, user_a_id, user_b_id, created_at)
+                VALUES (10, 1, 2, CURRENT_TIMESTAMP), (20, 2, 3, CURRENT_TIMESTAMP)
+            """)
             )
             db.session.flush()
             read_at = datetime(2020, 1, 1, tzinfo=timezone.utc)

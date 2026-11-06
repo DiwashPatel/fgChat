@@ -1,4 +1,4 @@
-"""Relational models for identities, direct conversations, and messages."""
+"""Relational models for identities, conversations, and messages."""
 
 from datetime import datetime, timezone
 
@@ -52,8 +52,9 @@ class Conversation(db.Model):
     )
 
     id = db.Column(db.Integer, primary_key=True)
-    user_a_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    user_b_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_a_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    user_b_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    name = db.Column(db.String(80), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
     user_a = db.relationship(User, foreign_keys=[user_a_id])
     user_b = db.relationship(User, foreign_keys=[user_b_id])
@@ -71,6 +72,10 @@ class Conversation(db.Model):
     def includes(self, user_id: int) -> bool:
         return any(member.user_id == user_id for member in self.memberships)
 
+    @property
+    def is_group(self) -> bool:
+        return self.name is not None
+
     def peer_for(self, user_id: int) -> User:
         return self.user_b if user_id == self.user_a_id else self.user_a
 
@@ -83,7 +88,9 @@ class ConversationMember(db.Model):
         db.Integer, db.ForeignKey("conversations.id", ondelete="CASCADE"), primary_key=True
     )
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    last_read_message_id = db.Column(db.Integer, nullable=False, default=0, server_default="0")
     conversation = db.relationship(Conversation, back_populates="memberships")
+    user = db.relationship(User)
 
 
 class Message(db.Model):

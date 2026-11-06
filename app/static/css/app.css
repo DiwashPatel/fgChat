@@ -218,7 +218,7 @@ kbd { padding: 2px 4px; border: 1px solid #e4e9e5; border-radius: 3px; color: #a
 /* People search, voice call, and notices */
 .modal-backdrop, .call-backdrop { position: fixed; z-index: 20; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(22, 39, 30, .37); backdrop-filter: blur(4px); animation: fade-in .15s ease-out; }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
-.search-dialog { width: min(495px, 100%); max-height: min(650px, calc(100dvh - 40px)); overflow: hidden; padding: 24px; border: 1px solid #edf1ee; border-radius: 16px; background: white; box-shadow: var(--shadow); }
+.search-dialog { width: min(495px, 100%); max-height: min(650px, calc(100dvh - 40px)); overflow-y: auto; padding: 24px; border: 1px solid #edf1ee; border-radius: 16px; background: white; box-shadow: var(--shadow); }
 .dialog-header { display: flex; justify-content: space-between; gap: 15px; }
 .dialog-header h2 { margin: 8px 0 5px; font-family: var(--display); font-size: 22px; letter-spacing: -.8px; }
 .dialog-header p { margin: 0; color: #87948c; font-size: 10px; }
@@ -288,7 +288,6 @@ kbd { padding: 2px 4px; border: 1px solid #e4e9e5; border-radius: 3px; color: #a
   .back-button { display: grid; width: 31px; margin-left: -9px; }
   .chat-header { height: 60px; gap: 8px; padding: 0 12px; }
   .chat-header .avatar { width: 38px; height: 38px; }
-  .chat-more-button { display: none; }
   .message-history { padding: 20px 14px; }
   .message-content { max-width: 82%; }
   .composer { padding: 9px 11px max(10px, env(safe-area-inset-bottom)); }
@@ -316,3 +315,13 @@ kbd { padding: 2px 4px; border: 1px solid #e4e9e5; border-radius: 3px; color: #a
 
 .load-older { align-self: center; margin: 13px 0 0; padding: 7px 11px; border: 1px solid #e4ece6; border-radius: 7px; color: #769180; background: white; cursor: pointer; font-size: 9px; }
 .load-older:hover { color: var(--green); border-color: #c8dccd; }
+
+/* Small group-chat additions reuse the existing conversation and search UI. */
+.group-toggle { display: flex; align-items: center; gap: 8px; margin: 18px 0; font-size: 13px; }
+#group-fields label { display: block; margin-bottom: 6px; font-size: 12px; }
+.group-name { width: 100%; padding: 10px; border: 1px solid #dce9df; border-radius: 7px; font: inherit; }
+.group-hint { color: #687b6e; font-size: 12px; }
+.selected-members { display: flex; flex-wrap: wrap; gap: 6px; }
+#create-group { margin-top: 12px; }
+.person-open:disabled { opacity: .6; cursor: default; }
+.message-sender { color: #567360; font-size: 11px; }

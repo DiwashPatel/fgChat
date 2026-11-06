@@ -14,6 +14,8 @@
     typingTimeout: null,
     searchTimeout: null,
     peerOnline: false,
+    groupMembers: new Map(),
+    typingUsers: new Map(),
     pc: null,
     localStream: null,
     call: null,
@@ -70,11 +72,19 @@
     return date.toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" });
   }
 
+  function conversationName(conversation) {
+    return conversation.is_group ? conversation.name : conversation.peer.display_name;
+  }
+
+  function conversationAvatar(conversation) {
+    return conversation.is_group ? { id: conversation.id, display_name: conversation.name } : conversation.peer;
+  }
+
   function renderConversationList(filter = "") {
     const list = $("#conversation-list");
     const query = filter.toLocaleLowerCase();
-    const items = state.conversations.filter(({ peer }) =>
-      `${peer.display_name} ${peer.username}`.toLocaleLowerCase().includes(query));
+    const items = state.conversations.filter((conversation) =>
+      `${conversationName(conversation)} ${conversation.peer?.username || ""}`.toLocaleLowerCase().includes(query));
     $("#conversation-count").textContent = String(state.conversations.length);
     list.replaceChildren();
     if (!items.length) {
@@ -88,16 +98,16 @@
       const button = document.createElement("button");
       button.type = "button";
       button.className = `conversation-item${state.active?.id === conversation.id ? " active" : ""}`;
-      button.setAttribute("aria-label", `Open conversation with ${conversation.peer.display_name}`);
+      button.setAttribute("aria-label", `Open conversation with ${conversationName(conversation)}`);
       const avatar = document.createElement("span");
       avatar.className = "avatar";
-      setAvatar(avatar, conversation.peer);
+      setAvatar(avatar, conversationAvatar(conversation));
       const copy = document.createElement("span");
       copy.className = "conversation-copy";
       const top = document.createElement("span");
       top.className = "conversation-topline";
       const name = document.createElement("strong");
-      name.textContent = conversation.peer.display_name;
+      name.textContent = conversationName(conversation);
       const time = document.createElement("time");
       time.textContent = conversation.last_message ? displayTime(conversation.last_message.created_at) : "New";
       top.append(name, time);
@@ -105,7 +115,9 @@
       bottom.className = "conversation-bottomline";
       const preview = document.createElement("span");
       preview.className = "conversation-preview";
-      preview.textContent = conversation.last_message?.body || `@${conversation.peer.username}`;
+      preview.textContent = conversation.last_message
+        ? `${conversation.is_group ? `${conversation.last_message.sender}: ` : ""}${conversation.last_message.body}`
+        : conversation.is_group ? `${conversation.members.length} members` : `@${conversation.peer.username}`;
       bottom.append(preview);
       if (conversation.unread_count > 0) {
         const badge = document.createElement("span");
@@ -122,10 +134,13 @@
 
   function setActiveConversation(conversation) {
     if (state.active && state.socket?.connected) {
+      state.socket.emit("typing:set", { conversation_id: state.active.id, typing: false });
       state.socket.emit("conversation:leave", { conversation_id: state.active.id });
     }
     state.active = conversation;
-    state.peerOnline = Boolean(conversation.peer.online);
+    state.peerOnline = Boolean(conversation.peer?.online);
+    state.typingUsers.clear();
+    window.clearTimeout(state.typingTimeout);
     state.seenMessageIds.clear();
     state.activeMessages = [];
     state.olderCursor = null;
@@ -133,10 +148,11 @@
     app.classList.add("chat-open");
     $("#empty-state").hidden = true;
     $("#conversation-view").hidden = false;
-    $("#peer-name").textContent = conversation.peer.display_name;
-    $("#peer-status").textContent = state.peerOnline ? "Online now" : "Around somewhere";
+    $("#peer-name").textContent = conversationName(conversation);
+    $("#peer-status").textContent = conversation.is_group ? `${conversation.members.length} members` : state.peerOnline ? "Online now" : "Around somewhere";
     $("#peer-status").classList.toggle("is-online", state.peerOnline);
-    setAvatar($("#peer-avatar"), conversation.peer);
+    setAvatar($("#peer-avatar"), conversationAvatar(conversation));
+    $("#voice-call-button").hidden = conversation.is_group;
     renderConversationList($("#conversation-search").value);
   }
 
@@ -192,6 +208,12 @@
     }
     const content = document.createElement("div");
     content.className = "message-content";
+    if (state.active?.is_group) {
+      const sender = document.createElement("strong");
+      sender.className = "message-sender";
+      sender.textContent = mine ? "You" : message.sender;
+      content.append(sender);
+    }
     const bubble = document.createElement("div");
     bubble.className = "message-bubble";
     bubble.textContent = message.body;
@@ -201,7 +223,7 @@
     time.dateTime = message.created_at;
     time.textContent = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     meta.append(time);
-    if (mine) {
+    if (mine && !state.active?.is_group) {
       const receipt = document.createElement("span");
       receipt.className = "read-mark";
       receipt.setAttribute("aria-label", message.read_at ? "Read" : "Sent");
@@ -272,12 +294,56 @@
   function openModal() {
     $("#search-modal").hidden = false;
     $("#people-search").value = "";
+    $("#group-mode").checked = false;
+    $("#group-name").value = "";
+    state.groupMembers.clear();
+    updateGroupPicker();
     renderSearchPrompt("Type at least two characters to find someone.");
     window.setTimeout(() => $("#people-search").focus(), 40);
   }
 
   function closeModal() {
     $("#search-modal").hidden = true;
+  }
+
+  function updateGroupPicker() {
+    const groupMode = $("#group-mode").checked;
+    $("#group-fields").hidden = !groupMode;
+    $("#create-group").hidden = !groupMode;
+    $("#create-group").disabled = state.groupMembers.size < 2 || !$("#group-name").value.trim();
+    const selected = $("#selected-members");
+    selected.replaceChildren();
+    for (const user of state.groupMembers.values()) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "person-open";
+      button.textContent = `${user.display_name} ×`;
+      button.setAttribute("aria-label", `Remove ${user.display_name}`);
+      button.addEventListener("click", () => {
+        state.groupMembers.delete(user.id);
+        updateGroupPicker();
+        searchPeople($("#people-search").value);
+      });
+      selected.append(button);
+    }
+  }
+
+  async function createGroup() {
+    const button = $("#create-group");
+    button.disabled = true;
+    try {
+      const result = await request("/api/groups", {
+        method: "POST",
+        body: JSON.stringify({ name: $("#group-name").value, member_ids: [...state.groupMembers.keys()] }),
+      });
+      await refreshConversations();
+      closeModal();
+      await openConversation(result.conversation.id);
+    } catch (error) {
+      toast(error.message, "error");
+    } finally {
+      updateGroupPicker();
+    }
   }
 
   function renderSearchPrompt(text) {
@@ -301,6 +367,7 @@
     renderSearchPrompt("Looking for your people…");
     try {
       const result = await request(`/api/users?q=${encodeURIComponent(query.trim())}`);
+      if (query !== $("#people-search").value) return;
       const results = $("#search-results");
       results.replaceChildren();
       if (!result.users.length) {
@@ -323,8 +390,16 @@
         const start = document.createElement("button");
         start.className = "person-open";
         start.type = "button";
-        start.textContent = "Message";
-        start.addEventListener("click", () => startConversation(user));
+        const groupMode = $("#group-mode").checked;
+        start.textContent = groupMode ? (state.groupMembers.has(user.id) ? "Added" : "Add") : "Message";
+        start.disabled = groupMode && state.groupMembers.has(user.id);
+        start.addEventListener("click", () => {
+          if (!$("#group-mode").checked) return startConversation(user);
+          state.groupMembers.set(user.id, user);
+          start.textContent = "Added";
+          start.disabled = true;
+          updateGroupPicker();
+        });
         row.append(avatar, copy, start);
         results.append(row);
       }
@@ -349,13 +424,16 @@
     state.socket = io({ transports: ["websocket", "polling"] });
     const socket = state.socket;
     socket.on("connect", () => {
-      if (state.active) socket.emit("conversation:join", { conversation_id: state.active.id });
+      refreshConversations().then(() => {
+        if (state.active) openConversation(state.active.id);
+      }).catch((error) => toast(error.message, "error"));
     });
     const heartbeat = () => {
       if (socket.connected) socket.emit("presence:heartbeat", { call_id: state.call?.id || null });
     };
     window.setInterval(heartbeat, 25000);
     socket.on("connect_error", () => toast("Reconnecting to your conversations…", "error"));
+    socket.on("conversation:created", () => refreshConversations().catch((error) => toast(error.message, "error")));
     socket.on("message:new", (message) => {
       const conversation = state.conversations.find((item) => item.id === message.conversation_id);
       if (!conversation) {
@@ -368,19 +446,22 @@
         if (message.sender_id !== state.me.id) socket.emit("message:read", { conversation_id: message.conversation_id });
       } else if (message.sender_id !== state.me.id) {
         conversation.unread_count += 1;
-        toast(`${conversation.peer.display_name} sent you a message.`);
+        toast(`${conversationName(conversation)} sent you a message.`);
       }
       state.conversations.sort((a, b) => new Date(b.last_message?.created_at || 0) - new Date(a.last_message?.created_at || 0));
       renderConversationList($("#conversation-search").value);
     });
     socket.on("app:error", (event) => toast(event.message || "That didn't work. Try again.", "error"));
     socket.on("presence:changed", (event) => {
-      if (state.active?.peer.id === event.user_id) updatePeerPresence(event.online);
+      if (state.active?.peer?.id === event.user_id) updatePeerPresence(event.online);
     });
     socket.on("typing:changed", (event) => {
       if (state.active?.id !== event.conversation_id || event.user_id === state.me.id) return;
-      $("#typing-indicator").hidden = !event.typing;
-      $("#typing-label").textContent = `${state.active.peer.display_name} is typing`;
+      const member = state.active.members.find((user) => user.id === event.user_id);
+      if (event.typing && member) state.typingUsers.set(event.user_id, member.display_name);
+      else state.typingUsers.delete(event.user_id);
+      $("#typing-indicator").hidden = state.typingUsers.size === 0;
+      $("#typing-label").textContent = `${[...state.typingUsers.values()].join(", ")} ${state.typingUsers.size === 1 ? "is" : "are"} typing`;
       if (event.typing) scrollToBottom();
     });
     socket.on("message:read_receipt", (event) => {
@@ -444,7 +525,7 @@
   }
 
   async function startVoiceCall() {
-    if (!state.active) return;
+    if (!state.active || state.active.is_group) return;
     try {
       const config = await request("/api/calls/config");
       state.iceServers = config.ice_servers;
@@ -638,6 +719,12 @@
   }
 
   function bindEvents() {
+    $("#group-mode").addEventListener("change", () => {
+      updateGroupPicker();
+      searchPeople($("#people-search").value);
+    });
+    $("#group-name").addEventListener("input", updateGroupPicker);
+    $("#create-group").addEventListener("click", createGroup);
     $("#new-chat-button").addEventListener("click", openModal);
     $("#empty-new-chat").addEventListener("click", openModal);
     $("#search-modal").addEventListener("click", (event) => { if (event.target === event.currentTarget) closeModal(); });
@@ -661,7 +748,9 @@
     $("#menu-button").addEventListener("click", () => { $("#account-menu").hidden = !$("#account-menu").hidden; });
     $("#back-button").addEventListener("click", () => app.classList.remove("chat-open"));
     $("#chat-more-button").addEventListener("click", () => {
-      if (state.active) toast(`Conversation with @${state.active.peer.username}`);
+      if (state.active) toast(state.active.is_group
+        ? `Members: ${state.active.members.map((user) => `${user.display_name} (@${user.username})`).join(", ")}`
+        : `Conversation with @${state.active.peer.username}`);
     });
     setupShortcuts();
   }

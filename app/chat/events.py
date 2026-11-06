@@ -11,8 +11,9 @@ from flask import request
 from flask_login import current_user
 from flask_socketio import emit, join_room, leave_room
 
+from app.chat.reading import mark_conversation_read
 from app.extensions import db
-from app.models import Conversation, Message, User, utcnow
+from app.models import Conversation, Message, User
 
 
 class RealtimeState:
@@ -293,8 +294,8 @@ def register_socket_events(socketio) -> None:
         db.session.add(message)
         db.session.commit()
         payload = message.public_message()
-        for member_id in (conversation.user_a_id, conversation.user_b_id):
-            emit("message:new", payload, to=f"user:{member_id}")
+        for member in conversation.memberships:
+            emit("message:new", payload, to=f"user:{member.user_id}")
 
     @socketio.on("message:read")
     def mark_read(data):
@@ -302,24 +303,7 @@ def register_socket_events(socketio) -> None:
         conversation = db.session.get(Conversation, conversation_id) if conversation_id else None
         if conversation is None or not conversation.includes(current_user.id):
             return
-        unread = db.session.scalars(
-            db.select(Message).where(
-                Message.conversation_id == conversation.id,
-                Message.sender_id != current_user.id,
-                Message.read_at.is_(None),
-            )
-        ).all()
-        if not unread:
-            return
-        for message in unread:
-            message.read_at = utcnow()
-        db.session.commit()
-        receipt = {
-            "conversation_id": conversation.id,
-            "message_ids": [message.id for message in unread],
-        }
-        emit("message:read_receipt", receipt, to=f"user:{conversation.user_a_id}")
-        emit("message:read_receipt", receipt, to=f"user:{conversation.user_b_id}")
+        mark_conversation_read(conversation, current_user.id)
 
     @socketio.on("typing:set")
     def typing(data):
@@ -327,20 +311,17 @@ def register_socket_events(socketio) -> None:
         conversation = db.session.get(Conversation, conversation_id) if conversation_id else None
         if conversation is None or not conversation.includes(current_user.id):
             return
-        other_id = (
-            conversation.user_b_id
-            if current_user.id == conversation.user_a_id
-            else conversation.user_a_id
-        )
-        emit(
-            "typing:changed",
-            {
-                "conversation_id": conversation.id,
-                "user_id": current_user.id,
-                "typing": bool(data.get("typing")),
-            },
-            to=f"user:{other_id}",
-        )
+        for member in conversation.memberships:
+            if member.user_id != current_user.id:
+                emit(
+                    "typing:changed",
+                    {
+                        "conversation_id": conversation.id,
+                        "user_id": current_user.id,
+                        "typing": bool(data.get("typing")),
+                    },
+                    to=f"user:{member.user_id}",
+                )
 
     @socketio.on("call:start")
     def call_start(data):
