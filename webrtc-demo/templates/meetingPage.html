@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>fgChat Voice Call</title>
+</head>
+<body data-meeting-id="{{ meeting_id }}">
+    <h1>fgChat Voice Call</h1>
+    <h5>Meeting ID: {{ meeting_id }}</h5>
+
+    <button id="call_button">Join Call</button>
+    <button id="mute_button" disabled>Mute</button>
+    <button id="hangup_button" disabled>Hang Up</button>
+
+    <p id="status">Not connected</p>
+
+    <audio id="remote_audio" autoplay controls></audio>
+
+    <script>
+        
+        const meetingId = document.body.dataset.meetingId;
+
+        const callButton = document.getElementById("call_button");
+        const muteButton = document.getElementById("mute_button");
+        const hangupButton = document.getElementById("hangup_button");
+        const statusText = document.getElementById("status");
+        const remoteAudio = document.getElementById("remote_audio");
+
+        let socket = null;
+        let pc = null;
+        let localStream = null;
+        let pendingCandidates = [];
+
+        // Send a signaling message to FastAPI.
+        function send(message) {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify(message));
+            }
+        }
+
+        // Add ICE candidates received before remote SDP was ready.
+        async function flushCandidates() {
+            for (const candidate of pendingCandidates) {
+                await pc.addIceCandidate(candidate);
+            }
+
+            pendingCandidates = [];
+        }
+
+        // Prepare WebRTC and connect to signaling.
+        callButton.onclick = async () => {
+            callButton.disabled = true;
+
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    audio: true
+                });
+
+                pc = new RTCPeerConnection({
+                    iceServers: [
+                        { urls: "stun:stun.l.google.com:19302" }
+                    ]
+                });
+
+                // Register our microphone track.
+                for (const track of localStream.getTracks()) {
+                    pc.addTrack(track, localStream);
+                }
+
+                // Receive remote audio. Like a pipe. Connects for the first time the audio arrives. not all times. browser handles each audio frames.
+                pc.ontrack = (event) => {
+                    remoteAudio.srcObject = event.streams[0];
+                    remoteAudio.play().catch(console.error);
+                };
+
+                // Send discovered ICE candidates to the other peer.
+                pc.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        send({
+                            type: "candidate",
+                            candidate: event.candidate
+                        });
+                    }
+                };
+
+                // Display connection state.
+                pc.onconnectionstatechange = () => {
+                    statusText.textContent =
+                        "WebRTC: " + pc.connectionState;
+                };
+
+                const protocol =
+                    window.location.protocol === "https:" ? "wss:" : "ws:";
+
+                const socketUrl =
+                    `${protocol}//${window.location.host}/ws/${meetingId}`;
+                console.log("Meeting ID:", meetingId);
+                console.log("WebSocket URL:", socketUrl);
+                socket = new WebSocket(socketUrl);
+
+                socket.onopen = () => {
+                    statusText.textContent = "Waiting for another participant...";
+                };
+
+                socket.onmessage = async (event) => {
+                    try {
+                        const message = JSON.parse(event.data);
+                        await handleSignalingMessage(message);
+                    } catch (error) {
+                        console.error("Signaling error:", error);
+                        statusText.textContent = "Signaling error";
+                    }
+                };
+
+                socket.onclose = () => {
+                    if (pc) {
+                        statusText.textContent = "Signaling disconnected";
+                        cleanup();
+                    }
+                };
+
+                muteButton.disabled = false;
+                hangupButton.disabled = false;
+
+            } catch (error) {
+                console.error(error);
+                statusText.textContent = error.message;
+                cleanup();
+            }
+        };
+
+        // Process messages from our Python server.
+        async function handleSignalingMessage(message) {
+            if (message.type === "waiting") {
+                statusText.textContent = "Waiting for another participant...";
+            }
+
+            else if (message.type === "ready") {
+                statusText.textContent = "Negotiating call...";
+
+                if (message.caller) {
+                    const offer = await pc.createOffer();
+                    await pc.setLocalDescription(offer);
+
+                    send({
+                        type: "offer",
+                        sdp: pc.localDescription
+                    });
+                }
+            }
+
+            else if (message.type === "offer") {
+                await pc.setRemoteDescription(message.sdp);
+                await flushCandidates();
+
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+
+                send({
+                    type: "answer",
+                    sdp: pc.localDescription
+                });
+            }
+
+            else if (message.type === "answer") {
+                await pc.setRemoteDescription(message.sdp);
+                await flushCandidates();
+            }
+
+            else if (message.type === "candidate") {
+                if (pc.remoteDescription) {
+                    await pc.addIceCandidate(message.candidate);
+                } else {
+                    pendingCandidates.push(message.candidate);
+                }
+            }
+
+            else if (message.type === "peer_left") {
+                statusText.textContent = "Other participant left";
+                if (socket) socket.close();
+                cleanup();
+            }
+        }
+
+        // Toggle microphone transmission.
+        muteButton.onclick = () => {
+            const audioTrack = localStream.getAudioTracks()[0];
+
+            audioTrack.enabled = !audioTrack.enabled;
+
+            muteButton.textContent =
+                audioTrack.enabled ? "Mute" : "Unmute";
+        };
+
+        // Leave the call.
+        hangupButton.onclick = () => {
+            if (socket) socket.close();
+            cleanup();
+            statusText.textContent = "Call ended";
+        };
+
+        // Release browser resources.
+        function cleanup() {
+            if (pc) {
+                pc.close();
+                pc = null;
+            }
+
+            if (localStream) {
+                for (const track of localStream.getTracks()) {
+                    track.stop();
+                }
+                localStream = null;
+            }
+
+            pendingCandidates = [];
+            remoteAudio.srcObject = null;
+
+            callButton.disabled = false;
+            muteButton.disabled = true;
+            hangupButton.disabled = true;
+            muteButton.textContent = "Mute";
+        }
+
+    </script>
+</body>
+</html>
