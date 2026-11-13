@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
 from app.chat import chat_bp
+from app.chat.encryption import validate_public_key
 from app.chat.reading import mark_conversation_read
 from app.extensions import db, socketio
 from app.models import Conversation, ConversationMember, Message, User
@@ -276,3 +277,45 @@ def call_config():
             }
         )
     return jsonify(ice_servers=ice_servers)
+
+
+@chat_bp.route("/api/e2ee/key", methods=["GET", "POST"])
+@login_required
+def encryption_key():
+    if request.method == "POST":
+        data = request.get_json(silent=True)
+        try:
+            if not isinstance(data, dict) or set(data) != {"public_key"}:
+                raise ValueError("Supply only a public key.")
+            key = validate_public_key(data["public_key"])
+        except ValueError as error:
+            return jsonify(error=str(error)), 400
+        # Compare-and-set: concurrent browser enrollment must not replace a key.
+        db.session.execute(
+            db.update(User)
+            .where(User.id == current_user.id, User.e2ee_public_key.is_(None))
+            .values(e2ee_public_key=key)
+        )
+        db.session.commit()
+        db.session.refresh(current_user._get_current_object())
+        if current_user.e2ee_public_key != key:
+            return jsonify(
+                error="This account already has an encryption key. Use its original browser."
+            ), 409
+    return jsonify(public_key=current_user.e2ee_public_key)
+
+
+@chat_bp.get("/api/conversations/<int:conversation_id>/keys")
+@login_required
+def conversation_keys(conversation_id):
+    conversation = conversation_for_user(conversation_id)
+    if conversation is None:
+        return jsonify(error="Conversation not found."), 404
+    if conversation.is_group:
+        return jsonify(error="Group encryption is not supported."), 400
+    return jsonify(
+        keys=[
+            {"user_id": user.id, "public_key": user.e2ee_public_key}
+            for user in (conversation.user_a, conversation.user_b)
+        ]
+    )

@@ -3,6 +3,8 @@
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
+from e2ee_helpers import enroll, envelope
+
 from app import create_app
 from app.extensions import db, socketio
 
@@ -49,20 +51,23 @@ def test_two_users_can_chat_and_find_the_message_after_signing_in_again():
         assert created.status_code == 200
         conversation_id = created.json["conversation"]["id"]
 
+        enroll(alice, bob)
         alice_socket = socketio.test_client(app, flask_test_client=alice)
         bob_socket = socketio.test_client(app, flask_test_client=bob)
         sockets.extend((alice_socket, bob_socket))
         assert alice_socket.is_connected() and bob_socket.is_connected()
 
+        encrypted = envelope()
         alice_socket.emit(
-            "message:send", {"conversation_id": conversation_id, "body": "Hello, Bobby!"}
+            "message:send", {"conversation_id": conversation_id, "encryption": encrypted}
         )
         alice_events = alice_socket.get_received()
         bob_events = bob_socket.get_received()
         sent = next(event["args"][0] for event in alice_events if event["name"] == "message:new")
         delivered = next(event["args"][0] for event in bob_events if event["name"] == "message:new")
         assert delivered["id"] == sent["id"]
-        assert delivered["body"] == "Hello, Bobby!"
+        assert delivered["body"] is None
+        assert delivered["encryption"] == encrypted
 
         inbox = bob.get("/api/conversations").json["conversations"]
         assert inbox[0]["id"] == conversation_id
@@ -88,7 +93,7 @@ def test_two_users_can_chat_and_find_the_message_after_signing_in_again():
         assert login.location.endswith("/chat")
         restored = bob.get(f"/api/conversations/{conversation_id}/messages")
         assert restored.status_code == 200
-        assert [message["body"] for message in restored.json["messages"]] == ["Hello, Bobby!"]
+        assert [message["encryption"] for message in restored.json["messages"]] == [encrypted]
     finally:
         for client in sockets:
             if client.is_connected():
@@ -132,6 +137,7 @@ def test_two_connected_users_can_send_messages_concurrently(tmp_path):
         assert created.status_code == 200
         conversation_id = created.json["conversation"]["id"]
 
+        enroll(alice, bob)
         alice_socket = socketio.test_client(app, flask_test_client=alice)
         bob_socket = socketio.test_client(app, flask_test_client=bob)
         sockets.extend((alice_socket, bob_socket))
@@ -141,30 +147,39 @@ def test_two_connected_users_can_send_messages_concurrently(tmp_path):
 
         start = threading.Barrier(3)
 
-        def send(client, body):
+        first, second = envelope(), envelope(reverse=True)
+
+        def send(client, encrypted):
             start.wait(timeout=5)
-            client.emit("message:send", {"conversation_id": conversation_id, "body": body})
+            client.emit(
+                "message:send", {"conversation_id": conversation_id, "encryption": encrypted}
+            )
 
         with ThreadPoolExecutor(max_workers=2) as executor:
-            alice_send = executor.submit(send, alice_socket, "Hello from Alice")
-            bob_send = executor.submit(send, bob_socket, "Hello from Bobby")
+            alice_send = executor.submit(send, alice_socket, first)
+            bob_send = executor.submit(send, bob_socket, second)
             start.wait(timeout=5)
             alice_send.result(timeout=5)
             bob_send.result(timeout=5)
 
-        expected = {"Hello from Alice": alice_id, "Hello from Bobby": bob_id}
+        expected = {first["message_id"]: alice_id, second["message_id"]: bob_id}
         for client in (alice_socket, bob_socket):
             messages = [
                 event["args"][0]
                 for event in client.get_received()
                 if event["name"] == "message:new"
             ]
-            assert {message["body"]: message["sender_id"] for message in messages} == expected
+            assert {
+                message["encryption"]["message_id"]: message["sender_id"] for message in messages
+            } == expected
             assert len({message["id"] for message in messages}) == 2
 
         history = alice.get(f"/api/conversations/{conversation_id}/messages")
         assert history.status_code == 200
-        saved = {message["body"]: message["sender_id"] for message in history.json["messages"]}
+        saved = {
+            message["encryption"]["message_id"]: message["sender_id"]
+            for message in history.json["messages"]
+        }
         assert saved == expected
         assert len(history.json["messages"]) == 2
     finally:

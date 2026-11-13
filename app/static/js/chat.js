@@ -6,6 +6,10 @@
   const csrfToken = $("meta[name='csrf-token']")?.content || "";
   const state = {
     me: null,
+    e2ee: null,
+    e2eeError: "Encryption is getting ready.",
+    sending: false,
+    retrySend: null,
     conversations: [],
     active: null,
     activeMessages: [],
@@ -24,6 +28,7 @@
     callTimeout: null,
     callStartedAt: null,
     seenMessageIds: new Set(),
+    seenEncryptedMessageIds: new Set(),
     iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
   };
 
@@ -116,7 +121,7 @@
       const preview = document.createElement("span");
       preview.className = "conversation-preview";
       preview.textContent = conversation.last_message
-        ? `${conversation.is_group ? `${conversation.last_message.sender}: ` : ""}${conversation.last_message.body}`
+        ? conversation.last_message.encryption ? "Encrypted message" : `${conversation.is_group ? `${conversation.last_message.sender}: ` : "Earlier unencrypted: "}${conversation.last_message.body}`
         : conversation.is_group ? `${conversation.members.length} members` : `@${conversation.peer.username}`;
       bottom.append(preview);
       if (conversation.unread_count > 0) {
@@ -142,6 +147,7 @@
     state.typingUsers.clear();
     window.clearTimeout(state.typingTimeout);
     state.seenMessageIds.clear();
+    state.seenEncryptedMessageIds.clear();
     state.activeMessages = [];
     state.olderCursor = null;
     $("#load-older").hidden = true;
@@ -153,7 +159,78 @@
     $("#peer-status").classList.toggle("is-online", state.peerOnline);
     setAvatar($("#peer-avatar"), conversationAvatar(conversation));
     $("#voice-call-button").hidden = conversation.is_group;
+    updateEncryptionNotice(conversation);
     renderConversationList($("#conversation-search").value);
+  }
+
+  async function initializeEncryption() {
+    try {
+      const current = await request("/api/e2ee/key");
+      if (current.public_key === null) {
+        const accepted = await new Promise((resolve) => {
+          const dialog = $("#enrollment-dialog");
+          const finish = (accepted) => { dialog.close(); resolve(accepted); };
+          $("#enable-encryption").onclick = () => finish(true);
+          $("#skip-encryption").onclick = () => finish(false);
+          dialog.oncancel = (event) => { event.preventDefault(); finish(false); };
+          dialog.showModal();
+        });
+        if (!accepted) throw new Error("Encryption is not enabled. Choose Retry encryption to set it up. Private messages cannot be sent without encryption.");
+      }
+      state.e2ee = await FgE2EE.create({ userId: state.me.id, request });
+      state.e2eeError = "";
+    } catch (error) {
+      state.e2eeError = error.message;
+    }
+  }
+
+  async function updateEncryptionNotice(conversation) {
+    const status = $("#encryption-status");
+    $("#retry-encryption").hidden = true;
+    $("#send-button").disabled = state.sending || (!conversation.is_group && !state.e2ee);
+    if (conversation.is_group) {
+      status.textContent = "Group messages are not end-to-end encrypted.";
+      return;
+    }
+    if (!state.e2ee) {
+      status.textContent = `Encrypted chat unavailable: ${state.e2eeError}`;
+      $("#retry-encryption").hidden = false;
+      return;
+    }
+    status.textContent = "Checking encryption keys…";
+    try {
+      await state.e2ee.prepare(conversation);
+      if (state.active?.id !== conversation.id) return;
+      status.textContent = "New messages are end-to-end encrypted. Compare safety codes in conversation details. Keys stay in this browser; clearing site data loses access.";
+    } catch (error) {
+      if (state.active?.id !== conversation.id) return;
+      status.textContent = error.message;
+      $("#retry-encryption").hidden = false;
+    }
+  }
+
+  async function showConversationDetails() {
+    const conversation = state.active;
+    if (!conversation) return;
+    const dialog = $("#encryption-details");
+    $("#safety-code").textContent = "";
+    if (conversation.is_group) {
+      $("#encryption-details-copy").textContent = `Members: ${conversation.members.map((user) => `${user.display_name} (@${user.username})`).join(", ")}`;
+      $("#encryption-details-help").textContent = "Group messages are not end-to-end encrypted and are stored as plaintext on the server.";
+    } else {
+      $("#encryption-details-copy").textContent = `Safety code for you and @${conversation.peer.username}`;
+      $("#encryption-details-help").textContent = "Compare this entire code through another trusted channel. Matching codes verify the keys, not the account name alone. Keys are trusted on first use and pinned in this browser. Earlier messages marked unencrypted remain plaintext. No key backup, recovery, or multi-device support is available.";
+    }
+    dialog.showModal();
+    if (!conversation.is_group) {
+      try {
+        if (!state.e2ee) throw new Error(state.e2eeError);
+        const code = await state.e2ee.safetyCode(conversation);
+        if (dialog.open && state.active?.id === conversation.id) $("#safety-code").textContent = code;
+      } catch (error) {
+        if (dialog.open) $("#safety-code").textContent = error.message;
+      }
+    }
   }
 
   async function openConversation(conversationId) {
@@ -189,6 +266,9 @@
 
   function appendMessage(message, scroll = true, addToState = true) {
     if (state.seenMessageIds.has(message.id)) return;
+    const encryptedId = message.encryption ? `${message.sender_id}:${message.encryption.message_id}` : null;
+    if (encryptedId && state.seenEncryptedMessageIds.has(encryptedId)) return;
+    if (encryptedId) state.seenEncryptedMessageIds.add(encryptedId);
     state.seenMessageIds.add(message.id);
     if (addToState) state.activeMessages.push(message);
     const history = $("#message-history");
@@ -216,7 +296,33 @@
     }
     const bubble = document.createElement("div");
     bubble.className = "message-bubble";
-    bubble.textContent = message.body;
+    if (message.encryption) {
+      bubble.textContent = "Decrypting message…";
+      const conversation = state.active;
+      if (!state.e2ee) {
+        bubble.textContent = "Encrypted message unavailable in this browser.";
+        bubble.title = state.e2eeError;
+        bubble.classList.add("message-unavailable");
+      } else {
+        state.e2ee.decrypt(conversation, message).then((body) => {
+          if (!bubble.isConnected) return;
+          bubble.textContent = body;
+        }).catch((error) => {
+          if (!bubble.isConnected) return;
+          bubble.textContent = "Encrypted message unavailable or unauthenticated.";
+          bubble.title = error.message;
+          bubble.classList.add("message-unavailable");
+        });
+      }
+    } else {
+      bubble.textContent = message.body;
+      if (!state.active?.is_group) {
+        const warning = document.createElement("span");
+        warning.className = "legacy-message-label";
+        warning.textContent = "Earlier message · not end-to-end encrypted";
+        content.append(warning);
+      }
+    }
     const meta = document.createElement("div");
     meta.className = "message-meta";
     const time = document.createElement("time");
@@ -226,8 +332,9 @@
     if (mine && !state.active?.is_group) {
       const receipt = document.createElement("span");
       receipt.className = "read-mark";
-      receipt.setAttribute("aria-label", message.read_at ? "Read" : "Sent");
+      receipt.setAttribute("aria-label", message.read_at ? "Opened" : "Sent");
       receipt.textContent = message.read_at ? "✓✓" : "✓";
+      receipt.title = "Opened means the conversation was opened; successful decryption is not confirmed.";
       row.dataset.messageId = message.id;
       meta.append(receipt);
     }
@@ -254,6 +361,7 @@
       const result = await request(`/api/conversations/${state.active.id}/messages?before=${state.olderCursor}`);
       if (state.active?.id !== conversationId) return;
       state.seenMessageIds.clear();
+      state.seenEncryptedMessageIds.clear();
       state.activeMessages = [...result.messages, ...state.activeMessages];
       $("#message-history").replaceChildren();
       for (const message of state.activeMessages) appendMessage(message, false, false);
@@ -469,7 +577,7 @@
       for (const id of event.message_ids) {
         const row = $(`[data-message-id="${id}"]`);
         const mark = row?.querySelector(".read-mark");
-        if (mark) { mark.textContent = "✓✓"; mark.setAttribute("aria-label", "Read"); }
+        if (mark) { mark.textContent = "✓✓"; mark.setAttribute("aria-label", "Opened"); mark.title = "The conversation was opened; successful decryption is not confirmed."; }
       }
     });
     socket.on("call:outgoing", (event) => showCall({ ...event, direction: "outgoing" }));
@@ -493,11 +601,13 @@
     status.classList.toggle("is-online", online);
   }
 
-  function sendComposerMessage(event) {
+  async function sendComposerMessage(event) {
     event.preventDefault();
     const input = $("#message-input");
-    const body = input.value.trim();
-    if (!body || !state.active) return;
+    const draft = input.value;
+    const body = draft.trim();
+    const conversation = state.active;
+    if (!body || !conversation || state.sending) return;
     if (!state.socket?.connected) {
       toast("Reconnecting before sending your message.", "error");
       return;
@@ -506,10 +616,47 @@
       toast("This message is too long. Keep it under 4,000 UTF-8 bytes.", "error");
       return;
     }
-    state.socket.emit("message:send", { conversation_id: state.active.id, body });
-    input.value = "";
-    input.style.height = "auto";
-    state.socket.emit("typing:set", { conversation_id: state.active.id, typing: false });
+    state.sending = true;
+    $("#send-button").disabled = true;
+    try {
+      let payload;
+      if (state.retrySend?.conversationId === conversation.id && state.retrySend.body === body) {
+        payload = state.retrySend.payload;
+      } else {
+        if (!conversation.is_group && !state.e2ee) throw new Error(state.e2eeError);
+        payload = conversation.is_group
+          ? { conversation_id: conversation.id, body }
+          : { conversation_id: conversation.id, encryption: await state.e2ee.encrypt(conversation, body) };
+      }
+      if (state.active?.id !== conversation.id) throw new Error("Conversation changed. Your draft was not sent.");
+      if (!state.socket.connected) throw new Error("Reconnecting before sending your message.");
+      // Retain the identical encrypted envelope on an uncertain acknowledgement so
+      // retrying cannot duplicate a persisted message or reuse a nonce for new text.
+      state.retrySend = conversation.is_group ? null : { conversationId: conversation.id, body, payload };
+      const reply = await new Promise((resolve, reject) => {
+        state.socket.timeout(10000).emit("message:send", payload, (error, result) => {
+          if (error) reject(new Error("Delivery is not confirmed. Your draft is kept; retry to confirm delivery."));
+          else resolve(result);
+        });
+      });
+      if (!reply?.ok) {
+        state.retrySend = null;
+        throw new Error(reply?.error || "Message was not accepted. Your draft is kept.");
+      }
+      state.retrySend = null;
+      if (state.active?.id === conversation.id) updateEncryptionNotice(conversation);
+      if (state.active?.id === conversation.id && input.value === draft) {
+        input.value = "";
+        input.style.height = "auto";
+      }
+      state.socket.emit("typing:set", { conversation_id: conversation.id, typing: false });
+    } catch (error) {
+      toast(error.message, "error");
+      if (state.active?.id === conversation.id) updateEncryptionNotice(conversation);
+    } finally {
+      state.sending = false;
+      $("#send-button").disabled = !state.active || (!state.active.is_group && !state.e2ee);
+    }
   }
 
   function onTyping() {
@@ -709,6 +856,7 @@
       $("#menu-handle").textContent = `@${state.me.username}`;
       setAvatar($("#profile-avatar"), state.me);
       setAvatar($("#menu-avatar"), state.me);
+      await initializeEncryption();
       await refreshConversations();
       setupSocket();
       bindEvents();
@@ -747,10 +895,16 @@
     $("#mute-call").addEventListener("click", toggleMute);
     $("#menu-button").addEventListener("click", () => { $("#account-menu").hidden = !$("#account-menu").hidden; });
     $("#back-button").addEventListener("click", () => app.classList.remove("chat-open"));
-    $("#chat-more-button").addEventListener("click", () => {
-      if (state.active) toast(state.active.is_group
-        ? `Members: ${state.active.members.map((user) => `${user.display_name} (@${user.username})`).join(", ")}`
-        : `Conversation with @${state.active.peer.username}`);
+    $("#chat-more-button").addEventListener("click", showConversationDetails);
+    $("#close-encryption-details").addEventListener("click", () => $("#encryption-details").close());
+    $("#retry-encryption").addEventListener("click", async () => {
+      $("#retry-encryption").disabled = true;
+      try {
+        if (!state.e2ee) await initializeEncryption();
+        if (state.active) await openConversation(state.active.id);
+      } finally {
+        $("#retry-encryption").disabled = false;
+      }
     });
     setupShortcuts();
   }

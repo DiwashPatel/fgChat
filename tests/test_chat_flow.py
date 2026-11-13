@@ -1,5 +1,7 @@
 import unittest
 
+from e2ee_helpers import enroll, envelope
+
 from app import create_app
 from app.extensions import db, socketio
 from app.models import Conversation, ConversationMember, Message, User
@@ -132,19 +134,22 @@ class ChatFlowTest(unittest.TestCase):
         self.assertTrue(alice_socket.is_connected())
         self.assertTrue(bob_socket.is_connected())
         alice_socket.emit("conversation:join", {"conversation_id": conversation["id"]})
+        enroll(self.alice_http, self.bob_http)
+        encrypted = envelope()
         alice_socket.emit(
-            "message:send", {"conversation_id": conversation["id"], "body": "Hello, Bobby!"}
+            "message:send", {"conversation_id": conversation["id"], "encryption": encrypted}
         )
         alice_events = alice_socket.get_received()
         bob_events = bob_socket.get_received()
         sent = next(event["args"][0] for event in alice_events if event["name"] == "message:new")
         received = next(event["args"][0] for event in bob_events if event["name"] == "message:new")
         self.assertEqual(sent["id"], received["id"])
-        self.assertEqual(received["body"], "Hello, Bobby!")
+        self.assertIsNone(received["body"])
+        self.assertEqual(received["encryption"], encrypted)
         inbox = self.bob_http.get("/api/conversations")
         self.assertEqual(inbox.json["conversations"][0]["unread_count"], 1)
         history = self.bob_http.get(f"/api/conversations/{conversation['id']}/messages")
-        self.assertEqual(history.json["messages"][0]["body"], "Hello, Bobby!")
+        self.assertEqual(history.json["messages"][0]["encryption"], encrypted)
         self.assertIsNotNone(history.json["messages"][0]["read_at"])
         inbox = self.bob_http.get("/api/conversations")
         self.assertEqual(inbox.json["conversations"][0]["unread_count"], 0)

@@ -19,6 +19,7 @@ class User(UserMixin, db.Model):
     username = db.Column(db.String(24), nullable=False, index=True)
     display_name = db.Column(db.String(48), nullable=False)
     email = db.Column(db.String(254), nullable=True, index=True)
+    e2ee_public_key = db.Column(db.Text, nullable=True)
     password_hash = db.Column(db.String(256), nullable=True)
     auth_provider = db.Column(db.String(24), nullable=False, default="password")
     provider_subject = db.Column(db.String(255), nullable=True, unique=True)
@@ -95,13 +96,20 @@ class ConversationMember(db.Model):
 
 class Message(db.Model):
     __tablename__ = "messages"
-    __table_args__ = (db.Index("ix_message_conversation_created", "conversation_id", "id"),)
+    __table_args__ = (
+        db.Index("ix_message_conversation_created", "conversation_id", "id"),
+        db.UniqueConstraint("sender_id", "client_message_id", name="uq_message_sender_client_id"),
+        db.UniqueConstraint("conversation_id", "encryption_iv", name="uq_message_conversation_iv"),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     conversation_id = db.Column(
         db.Integer, db.ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
     )
     sender_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    encryption = db.Column(db.JSON, nullable=True)
+    client_message_id = db.Column(db.String(36), nullable=True)
+    encryption_iv = db.Column(db.String(16), nullable=True)
     body = db.Column(db.String(4000), nullable=False)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
     read_at = db.Column(db.DateTime(timezone=True), nullable=True)
@@ -117,7 +125,8 @@ class Message(db.Model):
             "conversation_id": self.conversation_id,
             "sender_id": self.sender_id,
             "sender": self.sender.display_name,
-            "body": self.body,
+            "body": None if self.encryption else self.body,
+            "encryption": self.encryption,
             "created_at": created.isoformat(),
             "read_at": self.read_at.isoformat() if self.read_at else None,
         }

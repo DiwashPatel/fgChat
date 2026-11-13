@@ -11,7 +11,7 @@ Requirements: Python 3.12+ and internet access for the first virtual-environment
 ./scripts/dev.sh
 ```
 
-Open [http://127.0.0.1:5000](http://127.0.0.1:5000), create an account, then open another browser profile and create a second account. Search for the other username to begin a private conversation. Messages update live and remain available after sign-in. Use the phone icon in a conversation to place or answer a one-to-one voice call. Browsers ask for microphone permission when a call is accepted.
+Open [http://127.0.0.1:5000](http://127.0.0.1:5000), create an account, and choose **Enable on this browser** after reading the key-storage warning. Then open another browser profile, create a second account, and enable encryption there too. Search for the other username to begin a private conversation. Messages update live and remain available after sign-in. Use the phone icon in a conversation to place or answer a one-to-one voice call. Browsers ask for microphone permission when a call is accepted.
 
 To start a group, click **＋**, check **Create a group chat**, enter a name, and search for at least two other people. Click **Add** beside each person, then **Create group**. Everyone selected sees the group immediately. The conversation details button shows its members.
 
@@ -22,7 +22,8 @@ The setup script creates the project-local `.venv/` and an ignored `.env` contai
 - Account registration, sign-in, sign-out, password hashing with scrypt, CSRF protection, HttpOnly/SameSite session cookies with secure-cookie support, and rate limits on account forms.
 - Search registered users and create one-to-one conversations or named group chats. Conversation membership is checked on every history and realtime operation.
 - Groups include sender names, typing indicators, persistent history, and separate unread counts for each member. Membership is fixed at creation; no roles, invitations, or member-management workflow.
-- Persistent text history with cursor-based loading, unread counts, typing indicators, online presence, and one-to-one read receipts.
+- End-to-end encryption for new one-to-one text messages using browser WebCrypto (P-256 ECDH, HKDF-SHA-256, AES-256-GCM), non-exportable browser-held private keys, pinned peer identities, and comparable safety codes. No plaintext fallback for private sends.
+- Persistent text history with cursor-based loading, unread counts, typing indicators, online presence, and one-to-one opened receipts (opening history does not prove successful decryption).
 - Browser voice calls through WebRTC with Socket.IO signaling, ICE server configuration, microphone mute, and call controls. Call audio is negotiated directly between browsers; the Flask service does not relay audio.
 - PostgreSQL support, Alembic migrations, optional Redis-backed Socket.IO fanout, distributed presence and call state, Redis-backed rate limiting, and a container setup.
 - Account records separate provider identity (`auth_provider` and `provider_subject`) from the local password flow so an OAuth provider can be added without changing conversation ownership.
@@ -34,6 +35,8 @@ The setup script installs the development tools in `.venv/`. Run the application
 ```sh
 .venv/bin/python -m pytest
 .venv/bin/ruff check app migrations run.py gunicorn.conf.py tests
+node --check app/static/js/chat.js
+node --check app/static/js/e2ee.js
 ```
 
 ### Real browser tests
@@ -109,7 +112,9 @@ scripts/      Local setup and container startup
 
 The HTTP API handles account and conversation reads. Socket.IO handles message delivery, presence, typing, receipts, and WebRTC signaling. SQLAlchemy models are database-independent; SQLite serves local development and PostgreSQL is suitable for deployed instances. Redis coordinates Socket.IO rooms, online sessions, active calls, and request limits across service instances. Schema changes are managed through Flask-Migrate.
 
-Messages are encrypted in transit when the application is served over HTTPS/WSS, and WebRTC media uses browser-managed DTLS-SRTP. Message bodies are stored as plaintext in the database, so this is not end-to-end encrypted chat. Configure encrypted database volumes, backups, access controls, and TLS in deployment. Voice call success depends on browser permissions, ICE connectivity, and TURN availability; calls should be exercised on the intended network before launch.
+**New one-to-one messages are end-to-end encrypted before leaving the browser.** The server stores ciphertext and rejects plaintext private sends. Group messages and earlier messages remain plaintext and are labeled as unencrypted. **Keys are tied to the original browser profile: there is no backup, recovery, reset, or multi-device support. Clearing site data permanently loses private-chat access.** Compare safety codes in conversation details through another trusted channel to authenticate first-contact keys. This static-key design has no forward secrecy or ratchet and is not independently audited. Read the [encryption design, threat model, and limitations](docs/e2ee.md) before deployment.
+
+HTTPS/WSS is still required, and WebRTC media uses browser-managed DTLS-SRTP. Configure encrypted database volumes, backups, access controls, and TLS in deployment. Voice call success depends on browser permissions, ICE connectivity, and TURN availability; calls should be exercised on the intended network before launch.
 
 The app supports one-to-one text and voice plus group text chats. Group calls, group read receipts, editing group membership, file sharing, message moderation/block rules, Google sign-in, and video calls are not included. The schema and route boundaries keep identity, messaging, and delivery policy separate so those features can be added without coupling passwords to conversations.
 

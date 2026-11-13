@@ -325,3 +325,14 @@ kbd { padding: 2px 4px; border: 1px solid #e4e9e5; border-radius: 3px; color: #a
 #create-group { margin-top: 12px; }
 .person-open:disabled { opacity: .6; cursor: default; }
 .message-sender { color: #567360; font-size: 11px; }
+
+/* Encryption state must remain visible, including unavailable-key failures. */
+.encryption-notice { padding: 10px 24px; font-size: 12px; line-height: 1.5; background: #eef4ef; color: #345342; border-bottom: 1px solid #dce7df; }
+.encryption-notice button { margin-left: 8px; border: 0; background: none; color: inherit; text-decoration: underline; cursor: pointer; }
+.encryption-details { max-width: min(560px, calc(100vw - 40px)); border: 1px solid #dce7df; border-radius: 20px; padding: 28px; color: #243a2e; }
+.encryption-details::backdrop { background: #11251c66; }
+.encryption-details p { font-size: 14px; line-height: 1.65; }
+.encryption-details code { display: block; font-size: 16px; line-height: 1.8; overflow-wrap: anywhere; user-select: all; }
+.legacy-message-label { display: block; font-size: 10px; color: #6a7069; margin-bottom: 4px; }
+.message-unavailable { font-style: italic; }
+.send-button:disabled { opacity: .5; cursor: wait; }

@@ -16,12 +16,12 @@ def test_live_messages_receipts_and_history_after_signing_in_again(conversation,
     alice, bob = conversation
     send(alice, "Hello from Alice")
     expect(bob.locator(".message-bubble")).to_have_text(["Hello from Alice"])
-    expect(alice.locator(".read-mark")).to_have_attribute("aria-label", "Read")
+    expect(alice.locator(".read-mark")).to_have_attribute("aria-label", "Opened")
     send(bob, "Hello back from Bobby")
     expect(alice.locator(".message-bubble")).to_have_text(
         ["Hello from Alice", "Hello back from Bobby"]
     )
-    expect(bob.locator(".read-mark")).to_have_attribute("aria-label", "Read")
+    expect(bob.locator(".read-mark")).to_have_attribute("aria-label", "Opened")
 
     bob.get_by_role("button", name="Open account menu").click()
     bob.get_by_role("button", name="Sign out").click()
@@ -49,7 +49,7 @@ def test_unread_badge_clears_when_conversation_is_opened(users, start_chat):
     row.click()
     expect(bob.locator(".message-bubble")).to_have_text("Waiting in your inbox")
     expect(row.locator(".unread-badge")).to_have_count(0)
-    expect(alice.locator(".read-mark")).to_have_attribute("aria-label", "Read")
+    expect(alice.locator(".read-mark")).to_have_attribute("aria-label", "Opened")
 
 
 def test_typing_and_html_like_text_are_rendered_safely(conversation):
@@ -159,6 +159,7 @@ def test_group_picker_live_chat_individual_unread_and_persisted_history(
     charlie.get_by_label("Password", exact=True).fill("correct-horse-battery")
     charlie.get_by_label("Confirm password", exact=True).fill("correct-horse-battery")
     charlie.get_by_role("button", name="Create account").click()
+    charlie.get_by_role("button", name="Enable on this browser").click()
     expect(charlie.locator("#profile-name")).to_have_text("Charlie")
     errors = []
     for page in (alice, bob, charlie):
@@ -222,5 +223,7 @@ def test_group_picker_live_chat_individual_unread_and_persisted_history(
         ]
     )
     alice.get_by_role("button", name="Conversation details").click()
-    expect(alice.locator("#toast-stack")).to_contain_text("Charlie (@charlie)")
+    expect(alice.get_by_role("dialog", name="Conversation security")).to_contain_text(
+        "Charlie (@charlie)"
+    )
     assert errors == []

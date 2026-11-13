@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app import create_app
 from app.extensions import db
-from app.models import Conversation, ConversationMember, Message, User
+from app.models import Conversation, ConversationMember
 
 
 def test_membership_migration_backfills_existing_chats_and_preserves_data(tmp_path):
@@ -22,13 +22,14 @@ def test_membership_migration_backfills_existing_chats_and_preserves_data(tmp_pa
     with app.app_context():
         try:
             upgrade(revision="f2fe16aeb3f9")
-            db.session.add_all(
-                [
-                    User(id=user_id, username=name, display_name=name.title())
-                    for user_id, name in enumerate(("alice", "bobby", "charlie"), 1)
-                ]
+            db.session.execute(
+                db.text("""
+                INSERT INTO users (id, username, display_name, auth_provider, created_at)
+                VALUES (1, 'alice', 'Alice', 'password', CURRENT_TIMESTAMP),
+                       (2, 'bobby', 'Bobby', 'password', CURRENT_TIMESTAMP),
+                       (3, 'charlie', 'Charlie', 'password', CURRENT_TIMESTAMP)
+            """)
             )
-            db.session.flush()
             # Seed the historical schema without today's ORM-only columns.
             db.session.execute(
                 db.text("""
@@ -38,11 +39,13 @@ def test_membership_migration_backfills_existing_chats_and_preserves_data(tmp_pa
             )
             db.session.flush()
             read_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
-            db.session.add_all(
-                [
-                    Message(id=100, conversation_id=10, sender_id=1, body="Read", read_at=read_at),
-                    Message(id=101, conversation_id=20, sender_id=3, body="Unread"),
-                ]
+            db.session.execute(
+                db.text("""
+                INSERT INTO messages (id, conversation_id, sender_id, body, created_at, read_at)
+                VALUES (100, 10, 1, 'Read', CURRENT_TIMESTAMP, :read_at),
+                       (101, 20, 3, 'Unread', CURRENT_TIMESTAMP, NULL)
+            """),
+                {"read_at": read_at},
             )
             db.session.commit()
             db.session.remove()
@@ -69,12 +72,16 @@ def test_membership_migration_backfills_existing_chats_and_preserves_data(tmp_pa
                     Conversation.id
                 )
             ).all() == [(10, 1, 2), (20, 2, 3)]
-            messages = db.session.scalars(db.select(Message).order_by(Message.id)).all()
+            messages = db.session.execute(
+                db.text("SELECT id, body, read_at FROM messages ORDER BY id")
+            ).all()
             assert [(message.id, message.body) for message in messages] == [
                 (100, "Read"),
                 (101, "Unread"),
             ]
-            assert messages[0].read_at.replace(tzinfo=timezone.utc) == read_at
+            assert (
+                datetime.fromisoformat(messages[0].read_at).replace(tzinfo=timezone.utc) == read_at
+            )
             assert messages[1].read_at is None
         finally:
             db.session.remove()

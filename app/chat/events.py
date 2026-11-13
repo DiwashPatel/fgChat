@@ -10,7 +10,9 @@ from collections import defaultdict, deque
 from flask import request
 from flask_login import current_user
 from flask_socketio import emit, join_room, leave_room
+from sqlalchemy.exc import IntegrityError
 
+from app.chat.encryption import validate_envelope
 from app.chat.reading import mark_conversation_read
 from app.extensions import db
 from app.models import Conversation, Message, User
@@ -279,23 +281,78 @@ def register_socket_events(socketio) -> None:
         if not isinstance(data, dict):
             return _error("Invalid message.")
         conversation_id = _positive_int(data, "conversation_id")
-        body = data.get("body")
-        if not conversation_id or not isinstance(body, str):
-            return _error("Write a message before sending.")
-        body = body.strip()
-        if not body or len(body.encode("utf-8")) > 4000:
-            return _error("Messages must contain 1–4000 UTF-8 bytes.")
+        if not current_user.is_authenticated or not conversation_id:
+            return _error("Invalid message.")
         conversation = db.session.get(Conversation, conversation_id)
         if conversation is None or not conversation.includes(current_user.id):
             return _error("Conversation not found.")
+        envelope = None
+        body = ""
+        if conversation.is_group:
+            body = data.get("body")
+            if data.get("encryption") is not None:
+                return _error("Group encryption is not supported.")
+            if (
+                not isinstance(body, str)
+                or not body.strip()
+                or len(body.strip().encode("utf-8")) > 4000
+            ):
+                return _error("Messages must contain 1–4000 UTF-8 bytes.")
+            body = body.strip()
+        else:
+            if "body" in data:
+                return _error("Private chats require encryption, not plaintext.")
+            try:
+                envelope = validate_envelope(
+                    data.get("encryption"),
+                    current_user.e2ee_public_key,
+                    conversation.peer_for(current_user.id).e2ee_public_key,
+                )
+            except ValueError as error:
+                return _error(str(error))
+            existing = db.session.scalar(
+                db.select(Message).where(
+                    Message.sender_id == current_user.id,
+                    Message.client_message_id == envelope["message_id"],
+                )
+            )
+            if existing:
+                if existing.conversation_id == conversation.id and existing.encryption == envelope:
+                    return {"ok": True, "message_id": existing.id}
+                return _error("Encrypted message ID was already used.")
         if not state.allow_message(current_user.id):
             return _error("You're sending messages too quickly. Take a moment and try again.")
-        message = Message(conversation_id=conversation.id, sender_id=current_user.id, body=body)
+        message = Message(
+            conversation_id=conversation.id,
+            sender_id=current_user.id,
+            body=body,
+            encryption=envelope,
+            client_message_id=envelope["message_id"] if envelope else None,
+            encryption_iv=envelope["iv"] if envelope else None,
+        )
         db.session.add(message)
-        db.session.commit()
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            if envelope:
+                existing = db.session.scalar(
+                    db.select(Message).where(
+                        Message.sender_id == current_user.id,
+                        Message.client_message_id == envelope["message_id"],
+                    )
+                )
+                if (
+                    existing
+                    and existing.conversation_id == conversation.id
+                    and existing.encryption == envelope
+                ):
+                    return {"ok": True, "message_id": existing.id}
+            return _error("Encrypted message ID or nonce was already used. Try again.")
         payload = message.public_message()
         for member in conversation.memberships:
             emit("message:new", payload, to=f"user:{member.user_id}")
+        return {"ok": True, "message_id": message.id}
 
     @socketio.on("message:read")
     def mark_read(data):
@@ -409,6 +466,7 @@ def _positive_int(data: dict, key: str) -> int | None:
 
 def _error(message: str):
     emit("app:error", {"message": message})
+    return {"ok": False, "error": message}
 
 
 def _call_for_user(data: dict, user_id: int):

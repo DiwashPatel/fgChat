@@ -48,7 +48,7 @@ def live_url(tmp_path):
             stderr=subprocess.STDOUT,
         )
         try:
-            deadline = time.monotonic() + 15
+            deadline = time.monotonic() + 45
             while not ready.exists():
                 if process.poll() is not None or time.monotonic() > deadline:
                     pytest.fail(f"Browser test server did not start:\n{log_path.read_text()}")
@@ -80,6 +80,7 @@ def users(new_context, live_url):
         page.get_by_label("Confirm password", exact=True).fill("correct-horse-battery")
         page.get_by_role("button", name="Create account").click()
         expect(page).to_have_url(f"{live_url}/chat")
+        page.get_by_role("button", name="Enable on this browser").click()
         expect(page.locator("#profile-name")).to_have_text(name)
         expect(page.locator("#conversation-list")).to_contain_text(
             "Your conversations will show up here"
