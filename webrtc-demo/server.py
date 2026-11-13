@@ -6,8 +6,8 @@ from fastapi.templating import Jinja2Templates
 
 app = FastAPI()
 
-# BASE_URL = f"https://voice.newnet.dev"
-BASE_URL = f"http://127.0.0.1/8000"
+BASE_URL = f"https://voice.newnet.dev"
+# BASE_URL = f"http://127.0.0.1/8000"
 MEETING_BASE = BASE_URL + "/" + "meetings"
 
 templates = Jinja2Templates(directory="templates")
