@@ -54,11 +54,21 @@
                 localStream = await navigator.mediaDevices.getUserMedia({
                     audio: true
                 });
+                
+                const response = await fetch(
+                    `/meetings/${encodeURIComponent(meetingId)}/turn-credentials`,
+                    { cache: "no-store" }
+                );
+
+                if (!response.ok) {
+                    throw new Error("Failed to obtain TURN credentials");
+                }
+
+                const configuration = await response.json();
 
                 pc = new RTCPeerConnection({
-                    iceServers: [
-                        { urls: "stun:stun.l.google.com:19302" }
-                    ]
+                    iceServers: configuration.iceServers,
+                    iceTransportPolicy: "relay"
                 });
 
                 // Register our microphone track.

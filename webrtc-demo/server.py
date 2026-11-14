@@ -3,7 +3,15 @@ from fastapi.responses import FileResponse
 import secrets
 from fastapi import WebSocket, WebSocketDisconnect, WebSocketException, status
 from fastapi.templating import Jinja2Templates
+import base64
+import hashlib
+import hmac
+import time
+import secrets
+import os 
 
+TURN_SHARED_SECRET = os.environ["TURN_SHARED_SECRET"]
+TURN_CREDENTIAL_LIFETIME = 3600
 app = FastAPI()
 
 BASE_URL = f"https://voice.newnet.dev"
@@ -48,6 +56,56 @@ def get_meeting_page(request: Request, meeting_id: str):
         name="meetingPage.html",
         context={"meeting_id": meeting_id}
     )
+
+
+def create_turn_credentials(shared_secret: str):
+    expiration = int(time.time()) + TURN_CREDENTIAL_LIFETIME # 10 minutes.
+
+    participant_id = secrets.token_urlsafe(12)
+    username = f"{expiration}:{participant_id}"
+
+    digest = hmac.new(
+        shared_secret.encode("utf-8"),
+        username.encode("utf-8"),
+        hashlib.sha1
+    ).digest()
+
+    password = base64.b64encode(digest).decode("ascii")
+
+    return {
+        "username": username,
+        "credential": password
+    }
+
+
+@app.get("/meetings/{meeting_id}/turn-credentials")
+def get_turn_credentials(meeting_id: str):
+
+    if meeting_id not in db:
+        raise HTTPException(
+            status_code=404,
+            detail="Meeting not found"
+        )
+
+    credentials = create_turn_credentials(TURN_SHARED_SECRET)
+
+    return {
+        "iceServers": [
+            {
+                "urls": [
+                    "stun:stun.l.google.com:19302"
+                ]
+            },
+            {
+                "urls": [
+                    "turn:voice.newnet.dev:3478?transport=udp"
+                ],
+                "username": credentials["username"],
+                "credential": credentials["credential"]
+            }
+        ]
+    }
+
 
 """
 accept meeting. If there are two people, send them ready, and start the SDP offer thing to create a 
