@@ -9,11 +9,13 @@ import hmac
 import time
 import secrets
 import os 
+from fastapi.staticfiles import StaticFiles
+
 
 TURN_SHARED_SECRET = os.environ["TURN_SHARED_SECRET"]
 TURN_CREDENTIAL_LIFETIME = 3600
 app = FastAPI()
-
+app.mount("/static", StaticFiles(directory="static"), name="static")
 BASE_URL = f"https://voice.newnet.dev"
 # BASE_URL = f"http://127.0.0.1/8000"
 MEETING_BASE = BASE_URL + "/" + "meetings"

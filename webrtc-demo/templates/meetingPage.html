@@ -1,21 +1,88 @@
-<!DOCTYPE html>
-<html>
+
 <head>
-    <title>fgChat Voice Call</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>fgChat | Meeting</title>
+    <link rel="stylesheet" href="/static/meeting.css">
 </head>
+
 <body data-meeting-id="{{ meeting_id }}">
-    <h1>fgChat Voice Call</h1>
-    <h5>Meeting ID: {{ meeting_id }}</h5>
 
-    <button id="call_button">Join Call</button>
-    <button id="mute_button" disabled>Mute</button>
-    <button id="hangup_button" disabled>Hang Up</button>
+    <main class="meeting-app">
 
-    <p id="status">Not connected</p>
+        <header class="meeting-header">
+            <div class="brand">
+                <div class="brand-icon">fg</div>
+                <div>
+                    <h1>fgChat</h1>
+                    <p>Video meeting</p>
+                </div>
+            </div>
 
-    <audio id="remote_audio" autoplay controls></audio>
+            <div class="meeting-info">
+                <span class="meeting-id">Meeting: {{ meeting_id }}</span>
+                <span class="status-indicator" id="status">
+                    Not connected
+                </span>
+            </div>
+        </header>
+
+        <section class="video-stage">
+
+            <div class="remote-video-container">
+                <video
+                    id="remote_video"
+                    autoplay
+                    playsinline>
+                </video>
+
+                <div class="video-placeholder">
+                    <div class="avatar-placeholder">?</div>
+                    <p>Waiting for participant</p>
+                </div>
+
+                <span class="video-label remote-label">
+                    Participant
+                </span>
+            </div>
+
+            <div class="local-video-container">
+                <video
+                    id="local_video"
+                    autoplay
+                    muted
+                    playsinline>
+                </video>
+
+                <span class="video-label">You</span>
+            </div>
+
+        </section>
+
+        <footer class="controls">
+
+            <button id="call_button" class="control-button join-button">
+                Join Call
+            </button>
+
+            <button id="mute_button" class="control-button" disabled>
+                Mute
+            </button>
+
+            <button id="camera_button" class="control-button" disabled>
+                Camera Off
+            </button>
+
+            <button id="hangup_button" class="control-button hangup-button" disabled>
+                Hang Up
+            </button>
+
+        </footer>
+
+    </main>
 
     <script>
+
         
         const meetingId = document.body.dataset.meetingId;
 
@@ -23,8 +90,8 @@
         const muteButton = document.getElementById("mute_button");
         const hangupButton = document.getElementById("hangup_button");
         const statusText = document.getElementById("status");
-        const remoteAudio = document.getElementById("remote_audio");
-
+        const localVideo = document.getElementById("local_video");
+        const remoteVideo = document.getElementById("remote_video");
         let socket = null;
         let pc = null;
         let localStream = null;
@@ -52,8 +119,11 @@
 
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({
-                    audio: true
+                    audio: true,
+                    video: true
                 });
+                // display own camera immediately.
+                localVideo.srcObject = localStream;
                 
                 const response = await fetch(
                     `/meetings/${encodeURIComponent(meetingId)}/turn-credentials`,
@@ -78,8 +148,8 @@
 
                 // Receive remote audio. Like a pipe. Connects for the first time the audio arrives. not all times. browser handles each audio frames.
                 pc.ontrack = (event) => {
-                    remoteAudio.srcObject = event.streams[0];
-                    remoteAudio.play().catch(console.error);
+                    remoteVideo.srcObject = event.streams[0];
+                    remoteVideo.play().catch(console.error);
                 };
 
                 // Send discovered ICE candidates to the other peer.
@@ -219,11 +289,14 @@
                 for (const track of localStream.getTracks()) {
                     track.stop();
                 }
+
                 localStream = null;
             }
 
             pendingCandidates = [];
-            remoteAudio.srcObject = null;
+
+            localVideo.srcObject = null;
+            remoteVideo.srcObject = null;
 
             callButton.disabled = false;
             muteButton.disabled = true;
@@ -232,5 +305,40 @@
         }
 
     </script>
+
+
+    <script>
+        const cameraButton = document.getElementById("camera_button");
+
+        // Camera control is available after local media is acquired.
+        const originalGetUserMedia =
+            navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+
+        navigator.mediaDevices.getUserMedia = async (...args) => {
+            const stream = await originalGetUserMedia(...args);
+
+            if (stream.getVideoTracks().length > 0) {
+                cameraButton.disabled = false;
+                cameraButton.textContent = "Camera Off";
+            }
+
+            return stream;
+        };
+
+        cameraButton.onclick = () => {
+            if (!localStream) return;
+
+            const videoTrack = localStream.getVideoTracks()[0];
+
+            if (!videoTrack) return;
+
+            videoTrack.enabled = !videoTrack.enabled;
+
+            cameraButton.textContent =
+                videoTrack.enabled ? "Camera Off" : "Camera On";
+        };
+    </script>
+
+
 </body>
 </html>
