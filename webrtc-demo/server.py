@@ -10,7 +10,7 @@ import time
 import secrets
 import os 
 from fastapi.staticfiles import StaticFiles
-
+import httpx
 
 TURN_SHARED_SECRET = os.environ["TURN_SHARED_SECRET"]
 TURN_CREDENTIAL_LIFETIME = 3600
@@ -81,7 +81,7 @@ def create_turn_credentials(shared_secret: str):
 
 
 @app.get("/meetings/{meeting_id}/turn-credentials")
-def get_turn_credentials(meeting_id: str):
+async def get_turn_credentials(meeting_id: str):
 
     if meeting_id not in db:
         raise HTTPException(
@@ -89,23 +89,54 @@ def get_turn_credentials(meeting_id: str):
             detail="Meeting not found"
         )
 
-    credentials = create_turn_credentials(TURN_SHARED_SECRET)
+    # 1. Generate credentials for our own coturn server.
+    own_credentials = create_turn_credentials(TURN_SHARED_SECRET)
+
+    own_turn_server = {
+        "urls": [
+            "turn:voice.newnet.dev:3478?transport=udp"
+        ],
+        "username": own_credentials["username"],
+        "credential": own_credentials["credential"]
+    }
+
+    # 2. Request temporary credentials from Turnix.
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.post(
+                "https://turnix.io/api/v1/credentials/ice",
+                headers={
+                    "Authorization": (
+                        f"Bearer {os.environ['TURNIX_API_TOKEN']}"
+                    )
+                },
+                json={"ttl": 3600}
+            )
+
+            response.raise_for_status()
+            provider_data = response.json()
+
+            turnix_servers = provider_data["iceServers"]
+
+    except (httpx.HTTPError, ValueError, KeyError):
+        # If Turnix is unavailable, our own coturn remains usable.
+        turnix_servers = []
+
+    # 3. Combine all available ICE servers.
+    ice_servers = [
+        {
+            "urls": ["stun:stun.l.google.com:19302"]
+        }
+    ]
+
+    # Turnix servers can do all.
+    ice_servers.extend(turnix_servers)
+
+    # Our for only audio call..
+    ice_servers.append(own_turn_server)
 
     return {
-        "iceServers": [
-            {
-                "urls": [
-                    "stun:stun.l.google.com:19302"
-                ]
-            },
-            {
-                "urls": [
-                    "turn:voice.newnet.dev:3478?transport=udp"
-                ],
-                "username": credentials["username"],
-                "credential": credentials["credential"]
-            }
-        ]
+        "iceServers": ice_servers
     }
 
 
