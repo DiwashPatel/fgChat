@@ -1,0 +1,55 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>fgChat Meeting</title>
+    <link rel="stylesheet" href="/static/meeting.css">
+</head>
+
+<body data-meeting-id="{{ meeting_id }}">
+
+    <header class="header">
+        <h2>fgChat</h2>
+        <span id="connection-status">Not connected</span>
+    </header>
+
+    <main>
+        <section id="join-panel" class="join-panel">
+            <h1>Join Meeting</h1>
+
+            <input
+                id="display-name"
+                type="text"
+                maxlength="100"
+                placeholder="Enter your name"
+                autocomplete="name"
+            >
+
+            <button id="join-button">Join Meeting</button>
+        </section>
+
+        <section id="meeting-panel" hidden>
+            <div id="video-grid" class="video-grid"></div>
+
+            <div class="controls">
+                <button id="microphone-button">
+                    Mute
+                </button>
+
+                <button id="camera-button">
+                    Camera Off
+                </button>
+
+                <button id="leave-button" class="danger">
+                    Leave Meeting
+                </button>
+            </div>
+        </section>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.25.0/dist/livekit-client.umd.min.js"></script>
+    <script src="/static/meeting.js"></script>
+</body>
+</html>
