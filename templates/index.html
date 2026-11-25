@@ -3,7 +3,9 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
+
     <title>fgChat</title>
     <link rel="stylesheet" href="/static/meeting.css">
 </head>
@@ -11,7 +13,7 @@
 <body>
     <main class="home">
         <h1>fgChat</h1>
-        <p>Video meetings powered by WebRTC.</p>
+        <p>Create a video meeting.</p>
 
         <button id="create-meeting">
             Create Meeting
@@ -25,8 +27,12 @@
         const createButton =
             document.getElementById("create-meeting");
 
+        const statusText =
+            document.getElementById("home-status");
+
         createButton.onclick = async () => {
             createButton.disabled = true;
+            statusText.textContent = "Creating meeting...";
 
             try {
                 const response = await fetch("/meetings", {
@@ -38,6 +44,14 @@
                 }
 
                 const meeting = await response.json();
+
+                // Store the private credential in this tab.
+                sessionStorage.setItem(
+                    `fgchat_host_${meeting.meeting_id}`,
+                    meeting.host_secret
+                );
+
+                statusText.textContent = "Meeting created";
 
                 const container =
                     document.getElementById("meeting-link");
@@ -51,11 +65,15 @@
                 const url = document.createElement("p");
                 url.textContent = meeting.meeting_url;
 
-                container.append(link, url);
+                const note = document.createElement("p");
+                note.textContent =
+                    "Share the link with participants. " +
+                    "Open the meeting in this tab to retain host controls.";
+
+                container.append(link, url, note);
 
             } catch (error) {
-                document.getElementById("home-status")
-                    .textContent = error.message;
+                statusText.textContent = error.message;
             } finally {
                 createButton.disabled = false;
             }

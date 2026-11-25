@@ -3,7 +3,9 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
+
     <title>fgChat Meeting</title>
     <link rel="stylesheet" href="/static/meeting.css">
 </head>
@@ -27,23 +29,29 @@
                 autocomplete="name"
             >
 
-            <button id="join-button">Join Meeting</button>
+            <button id="join-button">
+                Join Meeting
+            </button>
         </section>
 
         <section id="meeting-panel" hidden>
             <div id="video-grid" class="video-grid"></div>
 
             <div class="controls">
-                <button id="microphone-button">
-                    Mute
-                </button>
+                <button id="microphone-button">Mute</button>
 
-                <button id="camera-button">
-                    Camera Off
-                </button>
+                <button id="camera-button">Camera Off</button>
 
                 <button id="leave-button" class="danger">
                     Leave Meeting
+                </button>
+
+                <button
+                    id="end-meeting-button"
+                    class="danger"
+                    hidden
+                >
+                    End for Everyone
                 </button>
             </div>
         </section>

@@ -207,9 +207,31 @@ function registerRoomEvents(currentRoom) {
 
     currentRoom.on(
         RoomEvent.Disconnected,
-        () => {
+        async () => {
             resetMeetingUI();
-            setStatus("Disconnected");
+
+            try {
+                const response = await fetch(
+                    `/api/meetings/${encodeURIComponent(meetingId)}`,
+                    { cache: "no-store" }
+                );
+
+                if (response.ok) {
+                    const meeting = await response.json();
+
+                    if (meeting.status === "ended") {
+                        joinButton.disabled = true;
+                        setStatus("Meeting ended by host");
+                        return;
+                    }
+                }
+
+                setStatus("Disconnected");
+
+            } catch (error) {
+                console.error(error);
+                setStatus("Disconnected");
+            }
         }
     );
 
@@ -424,3 +446,82 @@ window.addEventListener("pagehide", () => {
         room.disconnect();
     }
 });
+
+
+// HOST CONTROLS
+
+const endMeetingButton =
+    document.getElementById("end-meeting-button");
+
+const hostSecret = sessionStorage.getItem(
+    `fgchat_host_${meetingId}`
+);
+
+// Only show the control when this tab has host credentials.
+if (hostSecret) {
+    endMeetingButton.hidden = false;
+}
+
+
+endMeetingButton.onclick = async () => {
+    if (!hostSecret) {
+        return;
+}
+
+const confirmed = window.confirm(
+    "End this meeting for everyone?"
+);
+
+if (!confirmed) {
+    return;
+}
+
+endMeetingButton.disabled = true;
+setStatus("Ending meeting...");
+
+try {
+    const response = await fetch(
+        `/meetings/${encodeURIComponent(meetingId)}/end`,
+        {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                host_secret: hostSecret
+            })
+        }
+    );
+
+    if (!response.ok) {
+        const error = await response.json();
+
+        throw new Error(
+            error.detail || "Failed to end meeting"
+        );
+    }
+
+    // LiveKit also disconnects all connected participants.
+    if (room) {
+        await room.disconnect();
+    }
+
+    resetMeetingUI();
+    joinButton.disabled = true;
+
+    setStatus("Meeting ended for everyone");
+
+    sessionStorage.removeItem(
+        `fgchat_host_${meetingId}`
+    );
+
+    endMeetingButton.hidden = true;
+
+} catch (error) {
+    console.error(error);
+    setStatus(error.message);
+
+} finally {
+    endMeetingButton.disabled = false;
+}
+};
