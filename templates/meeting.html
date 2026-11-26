@@ -1,80 +1,65 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport"
-          content="width=device-width, initial-scale=1.0">
-
-    <title>fgChat Meeting</title>
-    <link rel="stylesheet" href="/static/meeting.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fgChat | Meeting</title>
+  <link rel="stylesheet" href="/static/css/meeting.css">
 </head>
-
 <body data-meeting-id="{{ meeting_id }}">
+  <header class="header">
+    <div class="brand"><span class="brand-mark">fg</span><span>fgChat <small>Meet</small></span></div>
+    <div class="header-right"><span class="meeting-code">{{ meeting_id }}</span><span id="connection-status" role="status">Preparing devices...</span></div>
+  </header>
+  <main>
+    <section id="join-panel" class="prejoin-layout">
+      <div class="preview-column">
+        <div class="preview-frame">
+          <video id="preview-video" autoplay muted playsinline hidden></video>
+          <div id="preview-placeholder" class="preview-placeholder"><span class="preview-avatar">fg</span><p>Camera is off</p></div>
+          <div class="preview-controls">
+            <button id="prejoin-microphone" class="pill-button" type="button">Mic on</button>
+            <button id="prejoin-camera" class="pill-button" type="button">Camera on</button>
+          </div>
+        </div>
+        <div class="device-panel">
+          <div class="device-heading"><h2>Devices</h2><span>Choose what you'll use</span></div>
+          <div class="device-fields">
+            <label>Microphone<select id="microphone-select" aria-label="Microphone"></select></label>
+            <label>Camera<select id="camera-select" aria-label="Camera"></select></label>
+            <label>Speaker<select id="speaker-select" aria-label="Speaker"></select></label>
+          </div>
+          <p id="prejoin-status" class="hint" role="status"></p>
+        </div>
+      </div>
+      <div class="join-column">
+        <div class="eyebrow">READY TO JOIN?</div>
+        <h1>Join your meeting</h1>
+        <p class="join-description">Check your camera and microphone before entering. Your preview is only visible to you.</p>
+        <label class="name-label" for="display-name">Your name</label>
+        <input id="display-name" maxlength="100" autocomplete="name" placeholder="Enter your name">
+        <button id="join-button" class="primary-button" type="button">Join now <span aria-hidden="true">→</span></button>
+        <p class="privacy-note">Your audio and video are not sent to the meeting until you join.</p>
+      </div>
+    </section>
 
-    <header class="header">
-        <h2>fgChat</h2>
-        <span id="connection-status">Not connected</span>
-    </header>
-
-    <main>
-        <section id="join-panel" class="join-panel">
-            <h1>Join Meeting</h1>
-
-            <input
-                id="display-name"
-                type="text"
-                maxlength="100"
-                placeholder="Enter your name"
-                autocomplete="name"
-            >
-
-            <button id="join-button">
-                Join Meeting
-            </button>
-        </section>
-
-        <section id="meeting-panel" hidden>
-              
-            <section id="presentation-area" class="presentation-area" hidden>
-                <div class="presentation-header">
-                    <span id="presenter-name">Screen sharing</span>
-                    <button id="close-presentation-button" type="button">
-                        Hide Presentation
-                    </button>
-                </div>
-
-                <div id="presentation-video-container"></div>
-            </section>
-
-
-            <div id="video-grid" class="video-grid"></div>
-
-            <div class="controls">
-                <button id="microphone-button">Mute</button>
-
-                <button id="camera-button">Camera Off</button>
-
-                <button id="screen-share-button">
-                    Share Screen
-                </button>
-
-                <button id="leave-button" class="danger">
-                    Leave Meeting
-                </button>
-
-                <button
-                    id="end-meeting-button"
-                    class="danger"
-                    hidden
-                >
-                    End for Everyone
-                </button>
-            </div>
-        </section>
-    </main>
-
-    <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.25.0/dist/livekit-client.umd.min.js"></script>
-    <script src="/static/meeting.js"></script>
+    <section id="meeting-panel" hidden>
+      <div class="meeting-toolbar"><span>You're in the meeting</span><button id="enable-audio-button" type="button">Enable audio</button><button id="show-presentation-button" type="button" hidden>View presentation</button></div>
+      <section id="presentation-area" class="presentation-area" hidden>
+        <div class="presentation-header"><span id="presenter-name">Screen sharing</span><button id="close-presentation-button" type="button">Hide presentation</button></div>
+        <div id="presentation-video-container"></div>
+      </section>
+      <div id="video-grid" class="video-grid"></div>
+      <footer class="controls">
+        <button id="microphone-button" type="button">Mute</button>
+        <button id="camera-button" type="button">Camera off</button>
+        <button id="screen-share-button" type="button">Share screen</button>
+        <button id="leave-button" class="danger" type="button">Leave meeting</button>
+        <button id="end-meeting-button" class="danger-outline" type="button" hidden>End for everyone</button>
+      </footer>
+    </section>
+  </main>
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.25.0/dist/livekit-client.umd.min.js"></script>
+  <script type="module" src="/static/js/meeting.js"></script>
 </body>
 </html>
