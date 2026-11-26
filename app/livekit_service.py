@@ -24,8 +24,9 @@ LIVEKIT_URL = os.getenv(
 def generate_join_credentials(
     meeting_id: str,
     display_name: str,
+    participant_id: str | None = None,
 ):
-    participant_id = str(uuid.uuid4())
+    participant_id = participant_id or str(uuid.uuid4())
 
     token = (
         api.AccessToken(

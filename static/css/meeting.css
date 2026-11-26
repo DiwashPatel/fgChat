@@ -6,3 +6,11 @@
 @media(max-width:850px){.prejoin-layout{grid-template-columns:1fr;gap:30px;min-height:auto}.join-column{max-width:100%}.device-fields{grid-template-columns:1fr 1fr}.header-right{max-width:50%}}@media(max-width:520px){.header{padding:12px 16px}.meeting-code{display:none}.prejoin-layout{padding:22px 14px 50px}.preview-frame{border-radius:16px}.device-fields{grid-template-columns:1fr}.device-panel{padding:18px}.controls{width:100%;border-radius:16px}.controls button{flex:1 1 40%;font-size:12px;padding:11px 8px}}
 /* Existing homepage remains supported when this stylesheet is used for index.html. */
 .home{max-width:600px;margin:90px auto;text-align:center;padding:24px}.home h1{font-size:44px}.home a{color:var(--blue)}.home p{overflow-wrap:anywhere}
+
+/* Waiting room and host admission controls */
+.waiting-panel{max-width:520px;margin:clamp(60px,12vh,130px) auto;padding:45px 30px;text-align:center;background:var(--panel);border:1px solid var(--border);border-radius:24px}
+.waiting-symbol{font-size:48px;color:var(--blue)}.waiting-panel h1{font-size:30px;letter-spacing:-.6px}.waiting-panel p{color:var(--muted);line-height:1.6}
+#waiting-status{color:var(--accent);font-weight:600}.host-lobby-panel{padding:20px 24px;margin-bottom:20px;background:var(--panel);border:1px solid var(--border);border-radius:18px}
+.host-lobby-heading{display:flex;justify-content:space-between;align-items:center;gap:16px}.host-lobby-heading h2{font-size:18px;margin:0 0 12px}.host-lobby-heading span{color:var(--muted);font-size:13px}
+.pending-request{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 0;border-top:1px solid var(--border)}.pending-request-actions{display:flex;gap:8px}.admit-button{background:var(--accent);color:#142139}.deny-button{background:#363b45}
+@media(max-width:600px){.pending-request{align-items:flex-start;flex-direction:column}.host-lobby-panel{padding:16px}}

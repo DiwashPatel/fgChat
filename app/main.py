@@ -1,5 +1,6 @@
 
 from pathlib import Path
+import uuid
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -8,6 +9,9 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 from app.meetings import meeting_manager
+from app.lobby import lobby_manager, LobbyError
+from app.lobby_connections import lobby_connections
+from app.routes.lobby import router as lobby_router
 from app.livekit_service import (
     generate_join_credentials,
     delete_livekit_room,
@@ -17,6 +21,7 @@ from app.livekit_service import (
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 app = FastAPI(title="fgChat")
+app.include_router(lobby_router)
 
 app.mount(
     "/static",
@@ -34,6 +39,9 @@ class JoinRequest(BaseModel):
         min_length=1,
         max_length=100,
     )
+    host_secret: str | None = None
+    request_id: str | None = None
+    request_secret: str | None = None
 
 
 class EndMeetingRequest(BaseModel):
@@ -126,9 +134,25 @@ def join_meeting(
             detail="Meeting is no longer accepting participants",
         )
 
+    # Host joins directly; guests must exchange a server-approved admission.
+    is_host = bool(request.host_secret and meeting_manager.is_host(meeting_id, request.host_secret))
+    if is_host:
+        display_name = request.display_name.strip()
+    else:
+        if not request.request_id or not request.request_secret:
+            raise HTTPException(status_code=403, detail="Admission approval required")
+        try:
+            participant_id = str(uuid.uuid4())
+            display_name = lobby_manager.consume(
+                meeting_id, request.request_id, request.request_secret, participant_id
+            )
+        except LobbyError as error:
+            raise HTTPException(status_code=error.status_code, detail=str(error)) from error
+
     credentials = generate_join_credentials(
         meeting_id=meeting_id,
-        display_name=request.display_name,
+        display_name=display_name,
+        participant_id=None if is_host else participant_id,
     )
 
     return {
@@ -182,5 +206,7 @@ async def end_meeting(
         )
 
     meeting_manager.finish_ending(meeting_id)
+    lobby_manager.close_meeting(meeting_id)
+    await lobby_connections.meeting_ended(meeting_id)
 
     return {"status": "ended"}
