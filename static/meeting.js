@@ -25,6 +25,23 @@ const statusText =
 let room = null;
 
 
+const screenShareButton =
+    document.getElementById("screen-share-button");
+
+const presentationArea =
+    document.getElementById("presentation-area");
+
+const presentationContainer =
+    document.getElementById("presentation-video-container");
+
+const presenterName =
+    document.getElementById("presenter-name");
+
+const closePresentationButton =
+    document.getElementById("close-presentation-button");
+
+let activeScreenShare = null;
+
 // One video tile per participant.
 const participantTiles = new Map();
 
@@ -123,6 +140,78 @@ function detachRemoteTrack(track) {
 }
 
 
+function showScreenShare(track, participant) {
+    const shareId = `${participant.identity}:${track.sid}`;
+
+    if (activeScreenShare?.id === shareId) {
+        return;
+    }
+
+    clearPresentation();
+
+    const element = track.attach();
+
+    element.className = "presentation-video";
+    element.autoplay = true;
+    element.playsInline = true;
+
+    if (participant.isLocal) {
+        element.muted = true;
+    }
+
+    presentationContainer.appendChild(element);
+
+    presenterName.textContent =
+        `${participant.name || "Participant"} is presenting`;
+
+    activeScreenShare = {
+        id: shareId,
+        track,
+        element,
+    };
+
+    presentationArea.hidden = false;
+}
+
+
+function clearPresentation() {
+    if (activeScreenShare) {
+        activeScreenShare.track.detach(
+            activeScreenShare.element
+        );
+
+        activeScreenShare.element.remove();
+        activeScreenShare = null;
+    }
+
+    presentationContainer.replaceChildren();
+    presentationArea.hidden = true;
+}
+
+
+function removeScreenShare(track) {
+    if (!activeScreenShare) {
+        return;
+    }
+
+    if (activeScreenShare.track === track) {
+        clearPresentation();
+    }
+}
+
+
+function updateScreenShareButton() {
+    if (!room) {
+        screenShareButton.textContent = "Share Screen";
+        return;
+    }
+
+    screenShareButton.textContent =
+        room.localParticipant.isScreenShareEnabled
+            ? "Stop Sharing"
+            : "Share Screen";
+}
+
 function attachLocalVideo() {
     const participant = room.localParticipant;
     const tileInfo = createParticipantTile(participant, true);
@@ -191,19 +280,65 @@ function registerRoomEvents(currentRoom) {
         }
     );
 
+
     currentRoom.on(
         RoomEvent.TrackSubscribed,
         (track, publication, participant) => {
+
+            if (publication.source === Track.Source.ScreenShare) {
+                showScreenShare(track, participant);
+                return;
+            }
+
             attachRemoteTrack(track, publication, participant);
         }
     );
 
+
+    currentRoom.on(
+        RoomEvent.LocalTrackUnpublished,
+        (publication) => {
+            if (publication.source === Track.Source.ScreenShare) {
+                clearPresentation();
+                updateScreenShareButton();
+            }
+        }
+    );
+
+
+    currentRoom.on(
+        RoomEvent.LocalTrackPublished,
+        (publication) => {
+            if (publication.source === Track.Source.ScreenShare) {
+                const track = publication.videoTrack;
+
+                if (track) {
+                    showScreenShare(
+                        track,
+                        currentRoom.localParticipant
+                    );
+                }
+
+                updateScreenShareButton();
+            }
+        }
+    );
+
+
+
     currentRoom.on(
         RoomEvent.TrackUnsubscribed,
-        (track) => {
+        (track, publication) => {
+
+            if (publication.source === Track.Source.ScreenShare) {
+                removeScreenShare(track);
+                return;
+            }
+
             detachRemoteTrack(track);
         }
     );
+
 
     currentRoom.on(
         RoomEvent.Disconnected,
@@ -301,20 +436,29 @@ async function joinMeeting() {
         createParticipantTile(newRoom.localParticipant, true);
 
         // Display participants already connected.
+        
         for (const participant of newRoom.remoteParticipants.values()) {
             createParticipantTile(participant);
 
-            // Handle tracks already subscribed.
             for (const publication of participant.trackPublications.values()) {
                 if (publication.isSubscribed && publication.track) {
-                    attachRemoteTrack(
-                        publication.track,
-                        publication,
-                        participant
-                    );
+
+                    if (publication.source === Track.Source.ScreenShare) {
+                        showScreenShare(
+                            publication.track,
+                            participant
+                        );
+                    } else {
+                        attachRemoteTrack(
+                            publication.track,
+                            publication,
+                            participant
+                        );
+                    }
                 }
             }
         }
+
 
         // Step 5: Publish microphone and camera.
         await newRoom.localParticipant.enableCameraAndMicrophone();
@@ -361,7 +505,8 @@ function resetMeetingUI() {
     participantTiles.clear();
 
     room = null;
-
+    clearPresentation();
+    updateScreenShareButton();
     joinPanel.hidden = false;
     meetingPanel.hidden = true;
 }
@@ -448,6 +593,44 @@ window.addEventListener("pagehide", () => {
 });
 
 
+screenShareButton.onclick = async () => {
+    if (!room) {
+        return;
+    }
+
+    const currentRoom = room;
+    screenShareButton.disabled = true;
+
+    try {
+        const participant = currentRoom.localParticipant;
+
+        const shouldEnable =
+            !participant.isScreenShareEnabled;
+
+        await participant.setScreenShareEnabled(
+            shouldEnable
+        );
+
+        updateScreenShareButton();
+
+    } catch (error) {
+        console.error("Screen sharing error:", error);
+
+        if (error.name !== "NotAllowedError") {
+            setStatus("Unable to change screen sharing");
+        }
+
+    } finally {
+        screenShareButton.disabled = false;
+    }
+};
+
+
+closePresentationButton.onclick = () => {
+    clearPresentation();
+};
+
+
 // HOST CONTROLS
 
 const endMeetingButton =
@@ -464,64 +647,64 @@ if (hostSecret) {
 
 
 endMeetingButton.onclick = async () => {
-    if (!hostSecret) {
+        if (!hostSecret) {
+            return;
+    }
+
+    const confirmed = window.confirm(
+        "End this meeting for everyone?"
+    );
+
+    if (!confirmed) {
         return;
-}
+    }
 
-const confirmed = window.confirm(
-    "End this meeting for everyone?"
-);
+    endMeetingButton.disabled = true;
+    setStatus("Ending meeting...");
 
-if (!confirmed) {
-    return;
-}
-
-endMeetingButton.disabled = true;
-setStatus("Ending meeting...");
-
-try {
-    const response = await fetch(
-        `/meetings/${encodeURIComponent(meetingId)}/end`,
-        {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                host_secret: hostSecret
-            })
-        }
-    );
-
-    if (!response.ok) {
-        const error = await response.json();
-
-        throw new Error(
-            error.detail || "Failed to end meeting"
+    try {
+        const response = await fetch(
+            `/meetings/${encodeURIComponent(meetingId)}/end`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    host_secret: hostSecret
+                })
+            }
         );
+
+        if (!response.ok) {
+            const error = await response.json();
+
+            throw new Error(
+                error.detail || "Failed to end meeting"
+            );
+        }
+
+        // LiveKit also disconnects all connected participants.
+        if (room) {
+            await room.disconnect();
+        }
+
+        resetMeetingUI();
+        joinButton.disabled = true;
+
+        setStatus("Meeting ended for everyone");
+
+        sessionStorage.removeItem(
+            `fgchat_host_${meetingId}`
+        );
+
+        endMeetingButton.hidden = true;
+
+    } catch (error) {
+        console.error(error);
+        setStatus(error.message);
+
+    } finally {
+        endMeetingButton.disabled = false;
     }
-
-    // LiveKit also disconnects all connected participants.
-    if (room) {
-        await room.disconnect();
-    }
-
-    resetMeetingUI();
-    joinButton.disabled = true;
-
-    setStatus("Meeting ended for everyone");
-
-    sessionStorage.removeItem(
-        `fgchat_host_${meetingId}`
-    );
-
-    endMeetingButton.hidden = true;
-
-} catch (error) {
-    console.error(error);
-    setStatus(error.message);
-
-} finally {
-    endMeetingButton.disabled = false;
-}
-};
+    };

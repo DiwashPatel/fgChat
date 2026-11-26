@@ -35,12 +35,29 @@
         </section>
 
         <section id="meeting-panel" hidden>
+              
+            <section id="presentation-area" class="presentation-area" hidden>
+                <div class="presentation-header">
+                    <span id="presenter-name">Screen sharing</span>
+                    <button id="close-presentation-button" type="button">
+                        Hide Presentation
+                    </button>
+                </div>
+
+                <div id="presentation-video-container"></div>
+            </section>
+
+
             <div id="video-grid" class="video-grid"></div>
 
             <div class="controls">
                 <button id="microphone-button">Mute</button>
 
                 <button id="camera-button">Camera Off</button>
+
+                <button id="screen-share-button">
+                    Share Screen
+                </button>
 
                 <button id="leave-button" class="danger">
                     Leave Meeting
