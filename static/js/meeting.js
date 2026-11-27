@@ -152,6 +152,7 @@ async function checkEnded() {
     const response = await fetch(`/api/meetings/${encodeURIComponent(meetingId)}`, {cache: 'no-store'});
     if (response.ok) {
       const info = await response.json();
+      if (info.media_policy) prejoin.setMeetingPolicy(info.media_policy);
       if (info.status === 'ended') {
         ended = true;
         joinButton.disabled = true;
@@ -211,6 +212,7 @@ async function joinMeeting(approvedAdmission = null) {
       meetingId,
       onStatus: setStatus,
       speakerId: prejoin.speakerSelect.value || null,
+      mediaPolicy: credentials.media_policy,
       onDisconnected: intentional => onRoomDisconnected(candidate, intentional)
     });
     meeting = candidate;
@@ -311,8 +313,14 @@ window.addEventListener('pagehide', () => {
   hostLobby.close();
   if (meeting) meeting.room.disconnect();
 });
-prejoin.initialize().catch(error => console.error('Prejoin initialization failed:', error));
-checkEnded();
+async function initializeMeetingPage() {
+  const meetingEnded = await checkEnded();
+  if (!meetingEnded) {
+    await prejoin.initialize().catch(error => console.error('Prejoin initialization failed:', error));
+  }
+}
+
+initializeMeetingPage();
 if (hostSecret) {
   hostLobby.connect('host', {host_secret: hostSecret});
   hostLobby.startPolling(refreshPending, 4000);

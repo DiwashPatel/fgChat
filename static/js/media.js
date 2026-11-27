@@ -15,7 +15,9 @@ export function registerMediaControls(getMeetingRoom, onStatus) {
     } catch (error) {
       console.error('Media operation failed:', error);
       onStatus(`${error.name || 'Error'}: ${error.message || 'Media operation failed'}`);
-    } finally { button.disabled = false; }
+    } finally {
+      if (getMeetingRoom() === meeting) meeting.updateControls();
+    }
   }
 
   mic.addEventListener('click', () => operate(mic, async meeting => {

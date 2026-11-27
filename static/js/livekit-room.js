@@ -1,11 +1,12 @@
 const {Room, RoomEvent, Track} = window.LivekitClient;
 
 export class MeetingRoom {
-  constructor({meetingId, onStatus, onDisconnected, speakerId}) {
+  constructor({meetingId, onStatus, onDisconnected, speakerId, mediaPolicy}) {
     this.meetingId = meetingId;
     this.onStatus = onStatus;
     this.onDisconnected = onDisconnected;
     this.speakerId = speakerId;
+    this.mediaPolicy = mediaPolicy || {microphone: true, camera: true, screen_share: true};
     this.room = new Room({adaptiveStream: true, dynacast: true});
     this.tiles = new Map();
     this.shares = new Map();
@@ -56,21 +57,33 @@ export class MeetingRoom {
 
       const permission = participant.permissions;
       const sources = permission?.canPublishSources;
-      const canPublishMicrophone = permission?.canPublish !== false &&
-        (!sources || sources.includes(Track.Source.Microphone));
+      const canPublish = source => permission?.canPublish !== false &&
+        (!sources || sources.includes(source));
+      this.mediaPolicy = {
+        microphone: canPublish(Track.Source.Microphone),
+        camera: canPublish(Track.Source.Camera),
+        screen_share: canPublish(Track.Source.ScreenShare) && canPublish(Track.Source.ScreenShareAudio),
+      };
 
-      if (!canPublishMicrophone && participant.isMicrophoneEnabled) {
-        // A source restriction can unpublish the server-side track while the
-        // local SDK still considers its microphone enabled. Disable it locally
-        // so the next user-initiated Unmute creates and publishes a fresh track.
-        participant.setMicrophoneEnabled(false)
-          .then(() => this.updateControls())
-          .catch(error => this.onStatus(`Microphone restriction update failed: ${error.message}`));
-        return;
+      // Apply revocations through the SDK so local tracks and controls agree
+      // with LiveKit. Permission restoration only enables the user's controls;
+      // it never turns a microphone or camera on without their action.
+      const updates = [];
+      if (!this.mediaPolicy.microphone && participant.isMicrophoneEnabled) {
+        updates.push(participant.setMicrophoneEnabled(false));
       }
-
-      // Permission restoration does not automatically enable a microphone.
-      this.updateControls();
+      if (!this.mediaPolicy.camera && participant.isCameraEnabled) {
+        updates.push(participant.setCameraEnabled(false));
+      }
+      if (!this.mediaPolicy.screen_share && participant.isScreenShareEnabled) {
+        updates.push(participant.setScreenShareEnabled(false));
+      }
+      Promise.allSettled(updates).then(results => {
+        const failed = results.find(result => result.status === 'rejected');
+        if (failed) this.onStatus(`Media permission update failed: ${failed.reason?.message || 'Unknown error'}`);
+        this.attachLocalCamera();
+        this.updateControls();
+      });
     });
   }
 
@@ -200,9 +213,15 @@ export class MeetingRoom {
 
   updateControls() {
     const p = this.room.localParticipant;
-    document.getElementById('microphone-button').textContent = p.isMicrophoneEnabled ? 'Mute' : 'Unmute';
-    document.getElementById('camera-button').textContent = p.isCameraEnabled ? 'Camera off' : 'Camera on';
-    document.getElementById('screen-share-button').textContent = p.isScreenShareEnabled ? 'Stop sharing' : 'Share screen';
+    const mic = document.getElementById('microphone-button');
+    const camera = document.getElementById('camera-button');
+    const screen = document.getElementById('screen-share-button');
+    mic.textContent = this.mediaPolicy.microphone ? p.isMicrophoneEnabled ? 'Mute' : 'Unmute' : 'Mic restricted';
+    camera.textContent = this.mediaPolicy.camera ? p.isCameraEnabled ? 'Camera off' : 'Camera on' : 'Camera restricted';
+    screen.textContent = this.mediaPolicy.screen_share ? p.isScreenShareEnabled ? 'Stop sharing' : 'Share screen' : 'Sharing restricted';
+    mic.disabled = !this.mediaPolicy.microphone;
+    camera.disabled = !this.mediaPolicy.camera;
+    screen.disabled = !this.mediaPolicy.screen_share;
     document.getElementById('show-presentation-button').hidden = this.shares.size === 0;
   }
 
@@ -216,8 +235,12 @@ export class MeetingRoom {
       }
     }
     // The preview tracks are transferred to LiveKit, not captured a second time.
-    if (tracks.audioTrack) await this.room.localParticipant.publishTrack(tracks.audioTrack, {source: Track.Source.Microphone});
-    if (tracks.videoTrack) await this.room.localParticipant.publishTrack(tracks.videoTrack, {source: Track.Source.Camera});
+    if (tracks.audioTrack && this.mediaPolicy.microphone) {
+      await this.room.localParticipant.publishTrack(tracks.audioTrack, {source: Track.Source.Microphone});
+    } else tracks.audioTrack?.stop();
+    if (tracks.videoTrack && this.mediaPolicy.camera) {
+      await this.room.localParticipant.publishTrack(tracks.videoTrack, {source: Track.Source.Camera});
+    } else tracks.videoTrack?.stop();
     this.attachLocalCamera();
     this.updateControls();
     if (!this.room.canPlaybackAudio) {

@@ -15,9 +15,16 @@
         <h1>fgChat</h1>
         <p>Create a video meeting.</p>
 
-        <button id="create-meeting">
-            Create Meeting
-        </button>
+        <form id="meeting-options">
+            <fieldset class="meeting-options">
+                <legend>Participant permissions</legend>
+                <label><input type="checkbox" name="microphone" checked> Microphone</label>
+                <label><input type="checkbox" name="camera" checked> Camera</label>
+                <label><input type="checkbox" name="screen_share" checked> Screen sharing</label>
+                <p class="hint">The host can change these permissions during the meeting.</p>
+            </fieldset>
+            <button id="create-meeting" type="submit">Create Meeting</button>
+        </form>
 
         <p id="home-status"></p>
         <div id="meeting-link"></div>
@@ -30,13 +37,21 @@
         const statusText =
             document.getElementById("home-status");
 
-        createButton.onclick = async () => {
+        document.getElementById("meeting-options").addEventListener("submit", async (event) => {
+            event.preventDefault();
             createButton.disabled = true;
             statusText.textContent = "Creating meeting...";
 
             try {
+                const options = new FormData(event.currentTarget);
                 const response = await fetch("/meetings", {
-                    method: "POST"
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({
+                        microphone: options.has("microphone"),
+                        camera: options.has("camera"),
+                        screen_share: options.has("screen_share")
+                    })
                 });
 
                 if (!response.ok) {
@@ -77,7 +92,7 @@
             } finally {
                 createButton.disabled = false;
             }
-        };
+        });
     </script>
 </body>
 </html>

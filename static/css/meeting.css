@@ -17,3 +17,5 @@
 
 #moderation-panel { margin-bottom: 16px; }
 #moderation-participants .pending-request { flex-wrap: wrap; gap: 12px; }
+.meeting-options,.media-policy-controls{margin:22px 0;padding:18px 20px;background:var(--panel);border:1px solid var(--border);border-radius:16px;text-align:left}.meeting-options legend,.media-policy-controls legend{padding:0 8px;font-weight:700}.meeting-options label,.media-policy-controls label{display:flex;align-items:center;gap:9px;margin:10px 0;color:var(--text)}input[type=checkbox]{width:auto;min-width:auto;accent-color:#8ab4f8}.meeting-options .hint{margin-bottom:0}.participant-policy-row{align-items:flex-start}.participant-policy-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.participant-policy-actions select{width:auto;max-width:190px;padding:9px 30px 9px 10px;font-size:12px}
+@media(max-width:720px){.participant-policy-actions{width:100%}.participant-policy-actions select{flex:1 1 140px;max-width:none}}

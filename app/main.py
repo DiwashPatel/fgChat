@@ -15,6 +15,7 @@ from app.routes.lobby import router as lobby_router
 from app.livekit_service import (
     generate_join_credentials,
     delete_livekit_room,
+    token_sources_for_policy,
 )
 
 
@@ -47,6 +48,12 @@ class JoinRequest(BaseModel):
     request_secret: str | None = None
 
 
+class CreateMeetingRequest(BaseModel):
+    microphone: bool = True
+    camera: bool = True
+    screen_share: bool = True
+
+
 class EndMeetingRequest(BaseModel):
     host_secret: str
 
@@ -65,8 +72,13 @@ def homepage(request: Request):
 
 
 @app.post("/meetings")
-def create_meeting(request: Request):
-    result = meeting_manager.create_meeting()
+def create_meeting(request: Request, body: CreateMeetingRequest | None = None):
+    policy = body or CreateMeetingRequest()
+    result = meeting_manager.create_meeting({
+        "microphone": policy.microphone,
+        "camera": policy.camera,
+        "screen_share": policy.screen_share,
+    })
 
     meeting_url = str(
         request.url_for(
@@ -79,6 +91,11 @@ def create_meeting(request: Request):
         "meeting_id": result["meeting_id"],
         "meeting_url": meeting_url,
         "host_secret": result["host_secret"],
+        "media_policy": {
+            "microphone": policy.microphone,
+            "camera": policy.camera,
+            "screen_share": policy.screen_share,
+        },
     }
 
 
@@ -119,7 +136,7 @@ def get_meeting_info(meeting_id: str):
 
 
 @app.post("/meetings/{meeting_id}/join")
-def join_meeting(
+async def join_meeting(
     meeting_id: str,
     request: JoinRequest,
 ):
@@ -152,21 +169,31 @@ def join_meeting(
         except LobbyError as error:
             raise HTTPException(status_code=error.status_code, detail=str(error)) from error
 
-    credentials = generate_join_credentials(
-        meeting_id=meeting_id,
-        display_name=display_name,
-        participant_id=None if is_host else participant_id,
-    )
+    async with moderation_store.policy_lock(meeting_id):
+        defaults = meeting_manager.get_media_policy(meeting_id)
+        effective_policy = (
+            {"microphone": True, "camera": True, "screen_share": True}
+            if is_host else moderation_store.effective_policy(
+                meeting_id, participant_id, defaults,
+            )
+        )
+        credentials = generate_join_credentials(
+            meeting_id=meeting_id,
+            display_name=display_name,
+            participant_id=None if is_host else participant_id,
+            allowed_sources=token_sources_for_policy(effective_policy),
+        )
 
-    if is_host:
-        host_identities[meeting_id] = credentials["participant_id"]
+        if is_host:
+            host_identities[meeting_id] = credentials["participant_id"]
 
-    return {
-        "meeting_id": meeting_id,
-        "participant_id": credentials["participant_id"],
-        "token": credentials["token"],
-        "server_url": "ws://localhost:7880",
-    }
+        return {
+            "meeting_id": meeting_id,
+            "participant_id": credentials["participant_id"],
+            "token": credentials["token"],
+            "server_url": "ws://localhost:7880",
+            "media_policy": effective_policy,
+        }
 
 
 @app.post("/meetings/{meeting_id}/end")

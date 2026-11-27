@@ -10,7 +10,7 @@ class MeetingManager:
         self.meetings = {}
         self.lock = threading.RLock() # can be thought of as Recursive Lock..(ReEntrant). Same lock can be reused again and again. it keeps a count...(analogy) 1 -> 2 -> 3..when done: 2 -> 1 -> 0 Free..
 
-    def create_meeting(self):
+    def create_meeting(self, media_policy=None):
         meeting_id = secrets.token_urlsafe(16)
         host_secret = secrets.token_urlsafe(32)
 
@@ -21,6 +21,12 @@ class MeetingManager:
             self.meetings[meeting_id] = {
                 "id": meeting_id,
                 "status": "created",
+                "media_policy": {
+                    "microphone": True,
+                    "camera": True,
+                    "screen_share": True,
+                    **(media_policy or {}),
+                },
                 "host_secret_hash": self._hash_secret(
                     host_secret
                 ),
@@ -41,7 +47,18 @@ class MeetingManager:
             return {
                 "id": meeting["id"],
                 "status": meeting["status"],
+                "media_policy": dict(meeting["media_policy"]),
             }
+
+    def set_media_policy(self, meeting_id: str, media_policy: dict[str, bool]):
+        with self.lock:
+            meeting = self.meetings[meeting_id]
+            meeting["media_policy"] = dict(media_policy)
+
+    def get_media_policy(self, meeting_id: str):
+        with self.lock:
+            meeting = self.meetings.get(meeting_id)
+            return dict(meeting["media_policy"]) if meeting else None
 
     def is_host(self, meeting_id: str, host_secret: str):
         with self.lock:

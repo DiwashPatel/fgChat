@@ -6,6 +6,7 @@ export class PrejoinController {
     this.audioTrack = null;
     this.cameraEnabled = true;
     this.microphoneEnabled = true;
+    this.allowedMedia = {microphone: true, camera: true};
     this.cameraId = undefined;
     this.microphoneId = undefined;
     this.preview = document.getElementById('preview-video');
@@ -26,9 +27,29 @@ export class PrejoinController {
   }
 
   setStatus(message) { this.status.textContent = message; }
+
+  setMeetingPolicy(policy) {
+    this.allowedMedia = {microphone: policy.microphone, camera: policy.camera};
+    if (!this.allowedMedia.camera) {
+      this.cameraEnabled = false;
+      this.videoTrack?.stop();
+      this.videoTrack = null;
+      this.preview.srcObject = null;
+      this.preview.hidden = true;
+    }
+    if (!this.allowedMedia.microphone) {
+      this.microphoneEnabled = false;
+      this.audioTrack?.stop();
+      this.audioTrack = null;
+    }
+    this.updateButtons();
+  }
+
   updateButtons() {
-    this.cameraButton.textContent = this.cameraEnabled ? 'Camera on' : 'Camera off';
-    this.microphoneButton.textContent = this.microphoneEnabled ? 'Mic on' : 'Mic off';
+    this.cameraButton.textContent = !this.allowedMedia.camera ? 'Camera disabled by host' : this.cameraEnabled ? 'Camera on' : 'Camera off';
+    this.microphoneButton.textContent = !this.allowedMedia.microphone ? 'Mic disabled by host' : this.microphoneEnabled ? 'Mic on' : 'Mic off';
+    this.cameraButton.disabled = this.busy || !this.allowedMedia.camera;
+    this.microphoneButton.disabled = this.busy || !this.allowedMedia.microphone;
     this.cameraButton.setAttribute('aria-pressed', String(this.cameraEnabled));
     this.microphoneButton.setAttribute('aria-pressed', String(this.microphoneEnabled));
     document.getElementById('preview-placeholder').hidden = !!this.videoTrack;
@@ -102,7 +123,7 @@ export class PrejoinController {
   }
 
   async toggleCamera() {
-    if (this.busy) return;
+    if (this.busy || !this.allowedMedia.camera) return;
     this.busy = true;
     try {
       if (this.cameraEnabled) {
@@ -119,7 +140,7 @@ export class PrejoinController {
   }
 
   async toggleMicrophone() {
-    if (this.busy) return;
+    if (this.busy || !this.allowedMedia.microphone) return;
     this.busy = true;
     try {
       if (this.microphoneEnabled) {

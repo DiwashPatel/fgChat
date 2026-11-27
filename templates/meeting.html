@@ -58,6 +58,12 @@
       </aside>
       <aside id="moderation-panel" class="host-lobby-panel" hidden>
         <div class="host-lobby-heading"><h2>Manage participants</h2><button id="refresh-moderation" type="button">Refresh</button></div>
+        <fieldset id="meeting-media-policy" class="media-policy-controls">
+          <legend>Default participant permissions</legend>
+          <label><input type="checkbox" data-meeting-capability="microphone" checked> Microphone</label>
+          <label><input type="checkbox" data-meeting-capability="camera" checked> Camera</label>
+          <label><input type="checkbox" data-meeting-capability="screen_share" checked> Screen sharing</label>
+        </fieldset>
         <div id="moderation-participants" class="pending-requests"></div>
       </aside>
       <div class="meeting-toolbar"><span>You're in the meeting</span><button id="enable-audio-button" type="button">Enable audio</button><button id="show-presentation-button" type="button" hidden>View presentation</button></div>
