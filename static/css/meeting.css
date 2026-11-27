@@ -14,3 +14,6 @@
 .host-lobby-heading{display:flex;justify-content:space-between;align-items:center;gap:16px}.host-lobby-heading h2{font-size:18px;margin:0 0 12px}.host-lobby-heading span{color:var(--muted);font-size:13px}
 .pending-request{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 0;border-top:1px solid var(--border)}.pending-request-actions{display:flex;gap:8px}.admit-button{background:var(--accent);color:#142139}.deny-button{background:#363b45}
 @media(max-width:600px){.pending-request{align-items:flex-start;flex-direction:column}.host-lobby-panel{padding:16px}}
+
+#moderation-panel { margin-bottom: 16px; }
+#moderation-participants .pending-request { flex-wrap: wrap; gap: 12px; }

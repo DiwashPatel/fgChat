@@ -22,6 +22,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 app = FastAPI(title="fgChat")
 app.include_router(lobby_router)
+from app.routes.moderation import router as moderation_router, host_identities
+from app.moderation import moderation_store
+app.include_router(moderation_router)
 
 app.mount(
     "/static",
@@ -155,6 +158,9 @@ def join_meeting(
         participant_id=None if is_host else participant_id,
     )
 
+    if is_host:
+        host_identities[meeting_id] = credentials["participant_id"]
+
     return {
         "meeting_id": meeting_id,
         "participant_id": credentials["participant_id"],
@@ -206,6 +212,8 @@ async def end_meeting(
         )
 
     meeting_manager.finish_ending(meeting_id)
+    moderation_store.clear_meeting(meeting_id)
+    host_identities.pop(meeting_id, None)
     lobby_manager.close_meeting(meeting_id)
     await lobby_connections.meeting_ended(meeting_id)
 

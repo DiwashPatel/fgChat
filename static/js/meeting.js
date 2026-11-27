@@ -2,6 +2,7 @@ import {PrejoinController} from './prejoin.js';
 import {MeetingRoom} from './livekit-room.js';
 import {registerMediaControls} from './media.js';
 import {LobbyClient} from './lobby.js';
+import {ModerationPanel} from './moderation.js';
 
 const meetingId = document.body.dataset.meetingId;
 const joinPanel = document.getElementById('join-panel');
@@ -18,6 +19,7 @@ const statusText = document.getElementById('connection-status');
 const nameInput = document.getElementById('display-name');
 const hostSecret = sessionStorage.getItem(`fgchat_host_${meetingId}`);
 const prejoin = new PrejoinController();
+const moderation = new ModerationPanel(meetingId, hostSecret, setStatus);
 let meeting = null;
 let joining = false;
 let leaving = false;
@@ -29,9 +31,9 @@ const lobby = new LobbyClient(meetingId, handleLobbyEvent);
 const hostLobby = new LobbyClient(meetingId, handleHostEvent);
 
 function setStatus(message) { statusText.textContent = message; }
-function showPrejoin() { joinPanel.hidden = false; meetingPanel.hidden = true; waitingPanel.hidden = true; }
-function showWaiting() { joinPanel.hidden = true; meetingPanel.hidden = true; waitingPanel.hidden = false; }
-function showMeeting() { joinPanel.hidden = true; meetingPanel.hidden = false; waitingPanel.hidden = true; hostLobbyPanel.hidden = !hostSecret; }
+function showPrejoin() { moderation.stop(); joinPanel.hidden = false; meetingPanel.hidden = true; waitingPanel.hidden = true; }
+function showWaiting() { moderation.stop(); joinPanel.hidden = true; meetingPanel.hidden = true; waitingPanel.hidden = false; }
+function showMeeting() { joinPanel.hidden = true; meetingPanel.hidden = false; waitingPanel.hidden = true; hostLobbyPanel.hidden = !hostSecret; moderation.start(); }
 
 async function requestAdmission() {
   if (requesting || admission || joining || ended) return;
@@ -303,6 +305,7 @@ document.getElementById('enable-audio-button').addEventListener('click', async (
   catch (error) { setStatus(`Audio unavailable: ${error.message}`); }
 });
 window.addEventListener('pagehide', () => {
+  moderation.stop();
   prejoin.dispose();
   lobby.close();
   hostLobby.close();

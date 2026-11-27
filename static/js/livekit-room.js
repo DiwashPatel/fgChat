@@ -51,6 +51,27 @@ export class MeetingRoom {
     r.on(RoomEvent.AudioPlaybackStatusChanged, () => {
       if (!r.canPlaybackAudio) this.onStatus('Audio playback is blocked. Click Enable audio.');
     });
+    r.on(RoomEvent.ParticipantPermissionsChanged, (_previousPermissions, participant) => {
+      if (participant !== r.localParticipant) return;
+
+      const permission = participant.permissions;
+      const sources = permission?.canPublishSources;
+      const canPublishMicrophone = permission?.canPublish !== false &&
+        (!sources || sources.includes(Track.Source.Microphone));
+
+      if (!canPublishMicrophone && participant.isMicrophoneEnabled) {
+        // A source restriction can unpublish the server-side track while the
+        // local SDK still considers its microphone enabled. Disable it locally
+        // so the next user-initiated Unmute creates and publishes a fresh track.
+        participant.setMicrophoneEnabled(false)
+          .then(() => this.updateControls())
+          .catch(error => this.onStatus(`Microphone restriction update failed: ${error.message}`));
+        return;
+      }
+
+      // Permission restoration does not automatically enable a microphone.
+      this.updateControls();
+    });
   }
 
   createTile(participant, local = false) {
